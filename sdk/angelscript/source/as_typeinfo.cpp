@@ -184,6 +184,16 @@ void *asCTypeInfo::GetUserData(asPWORD type) const
 	return 0;
 }
 
+void  asCTypeInfo::SetNativeClassUserData(void* NativeClassUserData)
+{
+	engine->ConfigError(asERROR, "SetNativeClassUserData", "Cannot set native class userdata for non object type", nullptr);
+}
+
+void* asCTypeInfo::GetNativeClassUserData() const
+{
+	return nullptr;
+}
+
 // interface
 const char *asCTypeInfo::GetName() const
 {

@@ -53,6 +53,7 @@
 #include "as_gc.h"
 #include "as_tokenizer.h"
 #include "as_map.h"
+#include <unordered_map>
 
 BEGIN_AS_NAMESPACE
 
@@ -101,8 +102,10 @@ public:
 
 	// Type registration
 	virtual int            RegisterObjectType(const char *obj, int byteSize, asQWORD flags);
+	virtual int            RegisterObjectBaseType(const char* obj, const char* base);
 	virtual int            RegisterObjectProperty(const char *obj, const char *declaration, int byteOffset, int compositeOffset = 0, bool isCompositeIndirect = false);
 	virtual int            RegisterObjectMethod(const char *obj, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false);
+	virtual asCScriptFunction* CreateVirtualFunction(asCScriptFunction *func, int idx); 
 	virtual int            RegisterObjectBehaviour(const char *obj, asEBehaviours behaviour, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false);
 	virtual int            RegisterInterface(const char *name);
 	virtual int            RegisterInterfaceMethod(const char *intf, const char *declaration);
@@ -206,6 +209,10 @@ public:
 
 	// Exception handling
 	virtual int SetTranslateAppExceptionCallback(asSFuncPtr callback, void *param, int callConv);
+	
+	static void StaticRegisterScriptObjectType(const class asCScriptObject* object, const class asCObjectType* ot);
+	static void StaticUnregisterScriptObjectType(const class asCScriptObject* object);
+	static const class asCObjectType* StaticFindScriptObjectType(const class asCScriptObject* object);
 
 //===========================================================
 // internal methods
@@ -228,9 +235,9 @@ public:
 	int RegisterBehaviourToObjectType(asCObjectType *objectType, asEBehaviours behaviour, const char *decl, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false);
 
 	int VerifyVarTypeNotInFunction(asCScriptFunction *func);
-
-	void *CallAlloc(const asCObjectType *objType) const;
-	void  CallFree(void *obj) const;
+	
+	static void *CallAlloc(const asCObjectType *objType);
+	static void  CallFree(void *obj);
 
 	void *CallGlobalFunctionRetPtr(int func) const;
 	void *CallGlobalFunctionRetPtr(int func, void *param1) const;
@@ -374,6 +381,7 @@ public:
 	// This map is used to quickly find a property by its memory address
 	// It is used principally during building, cleanup, and garbage detection for script functions
 	asCMap<void*, asCGlobalProperty*> varAddressMap; // doesn't increase ref count
+	static std::unordered_map<const asCScriptObject*, const asCObjectType*> objectTypeAddressMap;
 
 	// Stores all functions, i.e. registered functions, script functions, class methods, behaviours, etc.
 	asCArray<asCScriptFunction *> scriptFunctions;       // doesn't increase ref count

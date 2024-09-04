@@ -42,6 +42,7 @@
 #include "as_objecttype.h"
 #include "as_configgroup.h"
 #include "as_scriptengine.h"
+#include "as_scriptobject.h"
 
 BEGIN_AS_NAMESPACE
 
@@ -51,6 +52,8 @@ asCObjectType::asCObjectType() : asCTypeInfo()
 
 	acceptValueSubType = true;
 	acceptRefSubType   = true;
+	nativeClassUserData = nullptr;
+	nativeTypeInfo = nullptr;
 
 #ifdef WIP_16BYTE_ALIGN
 	alignment  = 4;
@@ -63,6 +66,8 @@ asCObjectType::asCObjectType(asCScriptEngine *in_engine) : asCTypeInfo(in_engine
 
 	acceptValueSubType = true;
 	acceptRefSubType = true;
+	nativeClassUserData = nullptr;
+	nativeTypeInfo = nullptr;
 
 #ifdef WIP_16BYTE_ALIGN
 	alignment  = 4;
@@ -82,6 +87,16 @@ asITypeInfo *asCObjectType::GetChildFuncdef(asUINT index) const
 		return 0;
 
 	return childFuncDefs[index];
+}
+
+void asCObjectType::SetNativeClassUserData(void* Data)
+{
+	nativeClassUserData = Data;
+}
+
+void* asCObjectType::GetNativeClassUserData() const
+{
+	return nativeClassUserData;
 }
 
 // internal
@@ -385,9 +400,78 @@ const char *asCObjectType::GetPropertyDeclaration(asUINT index, bool includeName
 	return tempString->AddressOf();
 }
 
+const char *asCObjectType::GetPropertyName(asUINT index) const
+{
+	if( index >= properties.GetLength() )
+		return nullptr;
+	
+	asCObjectProperty *prop = properties[index];
+	return prop->name.AddressOf();
+}
+
+int asCObjectType::GetPropertyTypeId(asUINT index) const
+{
+	if( index >= properties.GetLength() )
+		return 0;
+	
+	asCObjectProperty *prop = properties[index];
+	return engine->GetTypeIdFromDataType(prop->type);
+}
+
+int asCObjectType::GetPropertyOffset(asUINT index) const
+{
+	if( index >= properties.GetLength() )
+		return 0;
+	
+	asCObjectProperty *prop = properties[index];
+	return prop->byteOffset;
+}
+
+bool asCObjectType::IsPropertyPrivate(asUINT index) const
+{
+	if( index >= properties.GetLength() )
+		return false;
+	
+	asCObjectProperty *prop = properties[index];
+	return prop->isPrivate;
+}
+
+bool asCObjectType::IsPropertyProtected(asUINT index) const
+{
+	if( index >= properties.GetLength() )
+		return false;
+	
+	asCObjectProperty *prop = properties[index];
+	return prop->isProtected;
+}
+
+bool asCObjectType::IsPropertyNative(asUINT index) const
+{
+	if( index >= properties.GetLength() )
+		return false;
+	
+	asCObjectProperty *prop = properties[index];
+	return prop->isNative;
+}
+
+bool asCObjectType::IsPropertyReference(asUINT index) const
+{
+	if( index >= properties.GetLength() )
+		return false;
+	
+	asCObjectProperty *prop = properties[index];
+	return prop->type.IsReference();
+}
+
+
 asITypeInfo *asCObjectType::GetBaseType() const
 {
 	return derivedFrom; 
+}
+
+asITypeInfo *asCObjectType::GetNativeBaseType() const
+{
+	return nativeTypeInfo;
 }
 
 asUINT asCObjectType::GetBehaviourCount() const
@@ -506,7 +590,7 @@ asIScriptFunction *asCObjectType::GetBehaviourByIndex(asUINT index, asEBehaviour
 }
 
 // internal
-asCObjectProperty *asCObjectType::AddPropertyToClass(const asCString &propName, const asCDataType &dt, bool isPrivate, bool isProtected, bool isInherited)
+asCObjectProperty *asCObjectType::AddPropertyToClass(const asCString &propName, const asCDataType &dt, bool isPrivate, bool isProtected, bool isInherited, bool isNative)
 {
 	asASSERT( flags & asOBJ_SCRIPT_OBJECT );
 	asASSERT( dt.CanBeInstantiated() );
@@ -525,6 +609,7 @@ asCObjectProperty *asCObjectType::AddPropertyToClass(const asCString &propName, 
 	prop->isPrivate   = isPrivate;
 	prop->isProtected = isProtected;
 	prop->isInherited = isInherited;
+	prop->isNative    = isNative;
 
 	int propSize;
 	if( dt.IsObject() )
@@ -533,7 +618,8 @@ asCObjectProperty *asCObjectType::AddPropertyToClass(const asCString &propName, 
 		// because there is a risk that the script might
 		// try to access the content without knowing that
 		// it hasn't been initialized yet.
-		if( dt.GetTypeInfo()->flags & asOBJ_POD )
+
+		if( dt.GetTypeInfo()->flags & asOBJ_POD || isNative)
 			propSize = dt.GetSizeInMemoryBytes();
 		else
 		{
@@ -565,8 +651,8 @@ asCObjectProperty *asCObjectType::AddPropertyToClass(const asCString &propName, 
 
 	asASSERT((size % alignment) == 0);
 #endif
-
-	prop->byteOffset = size;
+	
+	prop->byteOffset = size - sizeof(asCScriptObjectData);
 	size += propSize;
 
 	properties.PushLast(prop);
@@ -581,6 +667,35 @@ asCObjectProperty *asCObjectType::AddPropertyToClass(const asCString &propName, 
 		type->AddRefInternal();
 
 	return prop;
+}
+
+asCObjectProperty *asCObjectType::InheritProperty(asCObjectProperty* prop)
+{
+	asASSERT( flags & asOBJ_SCRIPT_OBJECT );
+	asASSERT( !IsInterface() );
+	
+	// Store the properties in the object type descriptor
+	asCObjectProperty *new_prop = asNEW(asCObjectProperty)(*prop);
+	
+	if( prop == 0 )
+	{
+		// Out of memory
+		return 0;
+	}
+	
+	new_prop->isInherited = true;
+	properties.PushLast(new_prop);
+	
+	// Make sure the struct holds a reference to the config group where the object is registered
+	asCConfigGroup *group = engine->FindConfigGroupForTypeInfo(new_prop->type.GetTypeInfo());
+	if( group != 0 ) group->AddRef();
+	
+	// Add reference to object types
+	asCTypeInfo *type = new_prop->type.GetTypeInfo();
+	if( type )
+		type->AddRefInternal();
+	
+	return new_prop;
 }
 
 // internal
@@ -699,6 +814,10 @@ void asCObjectType::ReleaseAllFunctions()
 	if ( beh.getWeakRefFlag )
 		engine->scriptFunctions[beh.getWeakRefFlag]->ReleaseInternal();
 	beh.getWeakRefFlag = 0;
+	
+	if (beh.getTypeId)
+		engine->scriptFunctions[beh.getTypeId]->ReleaseInternal();
+	beh.getTypeId = 0;
 }
 
 END_AS_NAMESPACE

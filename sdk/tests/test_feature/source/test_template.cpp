@@ -230,6 +230,11 @@ void get(asIScriptGeneric* gen)
 {
 	float arg = gen->GetArgFloat(0);
 	get_called_correctly = gen->GetReturnTypeId() == asTYPEID_INT32 && gen->GetArgTypeId(0) == asTYPEID_FLOAT && arg == 1.25f;
+
+	// It is also possible to determine the correct types from the function itself, useful for functions that do not have return type or parameters
+	asIScriptFunction* func = gen->GetFunction();
+	if (func->GetSubTypeId(0) != asTYPEID_INT32 || func->GetSubTypeId(1) != asTYPEID_FLOAT)
+		get_called_correctly = false;
 }
 std::string* make()
 {
@@ -254,6 +259,43 @@ bool Test()
 	COutStream out;
 	CBufferedOutStream bout;
 
+	// Test parsing for template with multiple subtypes and auto declaration
+	// Reported by Patrick Jeeves
+	{
+		asIScriptEngine* engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+
+		engine->SetEngineProperty(asEP_INIT_GLOBAL_VARS_AFTER_BUILD, 0);
+
+		// register template with 2 subtypes
+		engine->RegisterObjectType("MyTmpl<class S, class T>", 0, asOBJ_REF | asOBJ_TEMPLATE);
+		engine->RegisterObjectBehaviour("MyTmpl<S,T>", asBEHAVE_FACTORY, "MyTmpl<S,T> @f(int&in)", asFUNCTION(0), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("MyTmpl<S,T>", asBEHAVE_ADDREF, "void f()", asFUNCTION(0), asCALL_GENERIC);
+		engine->RegisterObjectBehaviour("MyTmpl<S,T>", asBEHAVE_RELEASE, "void f()", asFUNCTION(0), asCALL_GENERIC);
+
+		asIScriptModule* mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test",
+			"class U {} class V {} \n"
+			"MyTmpl<U, V>@ g_obj1; \n"
+			"auto@ g_obj2 = MyTmpl<U, V>(); \n"
+			"void main() { \n"
+			"  MyTmpl<U, V>@ obj1; \n"
+			"  auto@ obj2 = MyTmpl<U, V>(); \n"
+			"} \n");
+		r = mod->Build();
+		if (r < 0)
+			TEST_FAILED;
+
+		if (bout.buffer != "")
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+
+		engine->ShutDownAndRelease();
+	}
+
 	// Test template methods and functions
 	// Initial implementation provided by MindOfTony
 	{
@@ -274,16 +316,22 @@ bool Test()
 			TEST_FAILED;
 		if (string(func->GetDeclaration(true, true, true)) != "void lmao::do_smth<T>(T param)")
 			TEST_FAILED;
+		if (func->GetSubTypeCount() != 1 || std::string(func->GetSubType(0)->GetName()) != "T")
+			TEST_FAILED;
 
 		// Register a global template function
+		engine->SetDefaultNamespace("nm");
 		r = engine->RegisterGlobalFunction("T get<class T, class K>(K lmao)", asFUNCTION(get), asCALL_GENERIC, 0);
 		if (r < 0)
 			TEST_FAILED;
+		engine->SetDefaultNamespace("");
 		// Retrieve the script function and check that it is a template function and that it has template sub types
 		func = engine->GetFunctionById(r);
 		if (func == 0 || func->GetFuncType() != asFUNC_TEMPLATE)
 			TEST_FAILED;
-		if (string(func->GetDeclaration(true, true, true)) != "T get<T,K>(K lmao)")
+		if (string(func->GetDeclaration(true, true, true)) != "T nm::get<T,K>(K lmao)")
+			TEST_FAILED;
+		if (func->GetSubTypeCount() != 2 || std::string(func->GetSubType(1)->GetName()) != "K" )
 			TEST_FAILED;
 
 		asIScriptModule* mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
@@ -292,11 +340,10 @@ bool Test()
 				{
 					lmao lol;
 					lol.do_smth<int>(100);
-					get<int, float>(1.25);
+					nm::get<int, float>(1.25);
 				}
 			)");
 		r = mod->Build();
-
 		if (r < 0)
 			TEST_FAILED;
 
@@ -1376,10 +1423,7 @@ bool Test()
 		if( r >= 0 )
 			TEST_FAILED;
 		if( bout.buffer != "mod (1, 7) : Info    : Compiling auto generated T::T()\n"
-						   "mod (1, 23) : Error   : No default constructor for object of type 'MyTmpl'.\n"
-						   "mod (2, 26) : Info    : Compiling S::S()\n"
-						   "mod (2, 34) : Error   : No appropriate opAssign method found in 'MyTmpl' for value assignment\n"
-						   "mod (2, 23) : Error   : No default constructor for object of type 'MyTmpl'.\n" )
+						   "mod (1, 23) : Error   : No default constructor for object of type 'MyTmpl'.\n" )
 		{
 			PRINTF("%s", bout.buffer.c_str());
 			TEST_FAILED;

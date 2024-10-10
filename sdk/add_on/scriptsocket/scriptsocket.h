@@ -34,13 +34,17 @@ public:
 
 	int            Listen(asWORD port);
 	int            Close();
-	CScriptSocket* Accept();
+	CScriptSocket* Accept(asINT64 timeoutMicrosec = 0);
 	int            Connect(asUINT ipv4Address, asWORD port);
 	int            Send(const std::string& data);
-	std::string    Receive();
+	std::string    Receive(asINT64 timeoutMicrosec = 0);
+
 
 protected:
 	~CScriptSocket();
+
+	int Select(asINT64 timeoutMicrosec = 0);
+
 	mutable int m_refCount;
 
 	int m_socket;

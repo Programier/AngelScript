@@ -15,7 +15,7 @@ BODY { FONT-SIZE: 12px; FONT-FAMILY: Arial; }
 
 <h1>AngelScript Change Log</h1>
 
-<h2>Version 2.38.0 WIP - 2024/10/05</h2>
+<h2>Version 2.38.0 WIP - 2024/11/02</h2>
 
 <ul>
 <li>Bug fixes
@@ -29,6 +29,10 @@ BODY { FONT-SIZE: 12px; FONT-FAMILY: Arial; }
 <li>Fixed compilation global variable initialization with assignment so value doesn't have to be copied (Thanks Patrick Jeeves)
 <li>Fixed some compilation errors in as_callfunc_arm64_msvc.asm (Thanks Manuel Lauss)
 <li>Fixed crash in GetThisPointer on contexts with nested state (Thanks Patrick Jeeves)
+<li>Fixed compiler warning on fallthrough statement in as_context.cpp (Thanks Thomas Degener)
+<li>Fixed crash when doing implicit conversion from value type to ref type for a function argument expecting reference to handle (Thanks Sam Tupy)
+<li>Fixed crash when compiling script attempting to declare variable with type auto[] (Thanks Sam Tupy)
+<li>Explicit copy constructor is no longer used implicitly by compiler (Thanks Patrick Jeeves)
 </ul>
 <li>Library
 <ul>
@@ -36,6 +40,7 @@ BODY { FONT-SIZE: 12px; FONT-FAMILY: Arial; }
 <li>Included a new function type asFUNC_TEMPLATE to indicate the template functions
 <li>Added engine property asEP_MEMBER_INIT_MODE to allow backwards compatiblity for how class members are initialized
 <li>Added engine property asEP_BOOL_CONVERSION_MODE to enable or disable contextual conversion to bool
+<li>Added engine property asEP_FOREACH_SUPPORT to allow turning off the foreach loops for backwards compatibility
 </ul>
 <li>Library interface
 <ul>
@@ -47,6 +52,7 @@ BODY { FONT-SIZE: 12px; FONT-FAMILY: Arial; }
 <li>It is now possible to instantiate registered template functions and call them (Thanks MindOfTony)
 <li>A class member can now be explicitly initialized in the class constructor, overriding the initialization defined in the declaration (Thanks Patrick Jeeves)
 <li>Implemented contextual conversion to bool in conditions and boolean operations (Thanks HenryAWE)
+<li>Implemented support for foreach loops (Thanks HenryAWE)
 </ul>
 <li>Add-ons &amp; Samples
 <ul>
@@ -56,10 +62,13 @@ BODY { FONT-SIZE: 12px; FONT-FAMILY: Arial; }
 <li>asrun can now use sockets to setup a simple server, or connect to remote sockets
 <li>Fixed crash in CScriptBuilder when parsing metadata in namespaces declared with nested scope on single line (Thanks Programier)
 <li>Added get_weekDay to datetime add-on
+<li>Implemented a string::regexFind method for the std::string add-on
+<li>Implemented support for foreach on script arrays
 </ul>
 <li>project
 <ul>
 <li>Fixed cmake project for compiling on Risc-V 64bit (Thanks Vixea 0)
+<li>Made installing the library optional in the cmakefile (Thanks 1vanK)
 </ul>
 </ul>
 

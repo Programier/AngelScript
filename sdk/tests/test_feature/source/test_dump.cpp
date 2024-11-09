@@ -341,6 +341,11 @@ void DumpModule(asIScriptModule *mod)
 		" beh(4) T[]@ $list(int&in, int&in) { repeat T }\n"
 		" T& opIndex(uint)\n"
 		" const T& opIndex(uint) const\n"
+		" uint opForBegin() const\n"
+		" bool opForEnd(uint) const\n"
+		" uint opForNext(uint) const\n"
+		" const T& opForValue0(uint) const\n"
+		" uint opForValue1(uint) const\n"
 		" T[]& opAssign(const T[]&in)\n"
 		" void insertAt(uint, const T&in)\n"
 		" void insertAt(uint, const T[]&inout)\n"
@@ -406,6 +411,7 @@ void DumpModule(asIScriptModule *mod)
 		" int findLastNotOf(const string&in, int = - 1) const\n"
 		" void insert(uint, const string&in)\n"
 		" void erase(uint, int = - 1)\n"
+		" int regexFind(const string&in, uint = 0, uint&out = void) const\n"
 		"type: interface MyIntf\n"
 		" void func() const\n" )
 	{

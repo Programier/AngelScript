@@ -1409,7 +1409,6 @@ void asCCompiler::CompileStatementBlock(asCScriptNode *block, bool ownVariableSc
 	bool isFinished = false;
 	bool hasUnreachableCode = false;
 	bool hasReturnBefore = false;
-	asUINT visibleNamespaceCount = 0;
 
 	if( ownVariableScope )
 	{
@@ -1446,25 +1445,6 @@ void asCCompiler::CompileStatementBlock(asCScriptNode *block, bool ownVariableSc
 		asCByteCode statement(engine);
 		if( node->nodeType == snDeclaration )
 			CompileDeclaration(node, &statement);
-		else if (node->nodeType == snUsing)
-		{
-			asCScriptNode* n = node->firstChild;
-			asCString name(&script->code[n->tokenPos], n->tokenLength);
-
-			auto visibleNamespace = engine->FindNameSpace(name.AddressOf());
-
-			if (visibleNamespace == 0)
-			{
-				asCString msg;
-				msg.Format(TXT_NAMESPACE_s_DOESNT_EXIST, name.AddressOf());
-				Error(msg, node);
-			}
-			else if (!m_namespaceVisibility.Exists(visibleNamespace))
-			{
-				m_namespaceVisibility.PushLast(visibleNamespace);
-				++visibleNamespaceCount;
-			}
-		}
 		else
 			CompileStatement(node, hasReturn, &statement);
 
@@ -1504,11 +1484,6 @@ void asCCompiler::CompileStatementBlock(asCScriptNode *block, bool ownVariableSc
 
 		RemoveVariableScope();
 		bc->Block(false);
-	}
-
-	if( visibleNamespaceCount > 0 )
-	{
-		m_namespaceVisibility.SetLengthNoAllocate(m_namespaceVisibility.GetLength() - visibleNamespaceCount);
 	}
 }
 
@@ -3057,7 +3032,7 @@ bool asCCompiler::CompileAutoType(asCDataType &type, asCExprContext &compiledCtx
 void asCCompiler::CompileDeclaration(asCScriptNode *decl, asCByteCode *bc)
 {
 	// Get the data type
-	asCDataType type = builder->CreateDataTypeFromNode(decl->firstChild, script, outFunc->nameSpace, false, outFunc->objectType, true, 0, 0, &m_namespaceVisibility);
+	asCDataType type = builder->CreateDataTypeFromNode(decl->firstChild, script, outFunc->nameSpace, false, outFunc->objectType);
 
 	// Declare all variables in this declaration
 	asCScriptNode *node = decl->firstChild->next;
@@ -5157,7 +5132,7 @@ void asCCompiler::CompileForEachStatement(asCScriptNode* node, asCByteCode* bc)
 
 		// Datatype of the item
 		asASSERT(rangeNode->nodeType == snDataType);
-		asCDataType itemDt = builder->CreateDataTypeFromNode(rangeNode, script, outFunc->nameSpace, false, outFunc->objectType, true, 0, 0, &m_namespaceVisibility);
+		asCDataType itemDt = builder->CreateDataTypeFromNode(rangeNode, script, outFunc->nameSpace, false, outFunc->objectType);
 		itemDataTypes.PushLast(itemDt);
 
 		// Indentifier
@@ -5237,7 +5212,7 @@ void asCCompiler::CompileForEachStatement(asCScriptNode* node, asCByteCode* bc)
 			asIScriptFunction* f = engine->scriptFunctions[funcs[i]];
 			asDWORD flags;
 			int paramTid;
-			if (f->GetParamCount() == 1 && f->GetReturnTypeId(&flags) == asTYPEID_BOOL && !(flags & asTM_INOUTREF) && f->GetParam(0, &paramTid) >= 0 && paramTid == iterTid)
+			if (f->GetParamCount() == 1 && f->GetReturnTypeId(&flags) == asTYPEID_BOOL && !(flags && asTM_INOUTREF) && f->GetParam(0, &paramTid) >= 0 && paramTid == iterTid)
 			{
 				if (opForEndId != 0 && !isConstRange)
 				{
@@ -7515,7 +7490,7 @@ asUINT asCCompiler::ImplicitConvLambdaToFunc(asCExprContext *ctx, const asCDataT
 			// Check if the specified parameter types match the funcdef
 			if (typeNode->nodeType == snDataType)
 			{
-				asCDataType dt = builder->CreateDataTypeFromNode(typeNode, script, outFunc->nameSpace, false, outFunc->objectType, true, 0, 0, &m_namespaceVisibility);
+				asCDataType dt = builder->CreateDataTypeFromNode(typeNode, script, outFunc->nameSpace, false, outFunc->objectType);
 				asETypeModifiers inOutFlag;
 				dt = builder->ModifyDataTypeFromNode(dt, typeNode->next, script, &inOutFlag, 0);
 
@@ -10405,7 +10380,7 @@ int asCCompiler::CompileExpressionTerm(asCScriptNode *node, asCExprContext *ctx)
 		if (node->firstChild->nodeType == snDataType)
 		{
 			// Determine the type of the temporary object
-			asCDataType dt = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace, false, 0, true, 0, 0, &m_namespaceVisibility);
+			asCDataType dt = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace);
 
 			return CompileAnonymousInitList(node->lastChild, ctx, dt);
 		}
@@ -10548,21 +10523,6 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookupMember(const asCString &name, a
 	return SL_NOMATCH;
 }
 
-bool asCCompiler::isAmbiguousSymbol(const asCString &name, asCScriptNode* errNode, SYMBOLTYPE& currentType, SYMBOLTYPE nextType)
-{
-	if (currentType != SL_NOMATCH && currentType != nextType)
-	{
-	    asCString msg;
-	    msg.Format(TXT_AMBIGUOUS_SYMBOL_NAME_s, name.AddressOf());
-	    Error(msg, errNode);
-	    currentType = SL_NOMATCH;
-	    return true;
-	}
-
-	currentType = nextType;
-	return false;
-}
-
 // The purpose of this function is to find the entity that matches the symbol name respecting the scope and visibility hierarchy
 // The 'outResult' will be used to return info on what was identified, but no code will be produced by this function
 // input:
@@ -10585,7 +10545,7 @@ bool asCCompiler::isAmbiguousSymbol(const asCString &name, asCScriptNode* errNod
 //  SL_GLOBALTYPE       = type, lookupResult->dataType holds the type
 //  SL_ENUMVAL          = enum value, lookupResult->dataType holds the enum type, unless ambigious. lookupResult->symbolNamespace holds the namespace where the symbol was identified
 //  SL_ERROR            = error
-asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const asCString &scope, asCObjectType *objType, asCExprContext *outResult, asCScriptNode* errNode)
+asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const asCString &scope, asCObjectType *objType, asCExprContext *outResult)
 {
 	asASSERT(outResult);
 
@@ -10633,16 +10593,9 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 	}
 
 	// Recursively search parent namespaces for global entities
-	asCArray<asSNameSpace*> pendingNamespaces = m_namespaceVisibility;
-	asCArray<asSNameSpace*> visitedNamespaces;
 	asSNameSpace *currNamespace = DetermineNameSpace("");
-	SYMBOLTYPE resultSymbolType = SL_NOMATCH;
-
-	bool checkAmbiguousSymbols = currNamespace == engine->nameSpaces[0];
-
 	while( !objType && currNamespace )
 	{
-		visitedNamespaces.PushLast(currNamespace);
 		asCString currScope = scope;
 
 		// If the scope contains ::identifier, then use the last identifier as the class name and the rest of it as the namespace
@@ -10662,13 +10615,7 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 				{
 					SYMBOLTYPE r = SymbolLookupMember(name, ot, outResult);
 					if (r != 0)
-					{
-						if (!checkAmbiguousSymbols)
-							return r;
-
-						if (isAmbiguousSymbol(name, errNode, resultSymbolType, r))
-							return SL_NOMATCH;
-					}
+						return r;
 				}
 
 				ot = ot->derivedFrom;
@@ -10704,13 +10651,7 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 				{
 					SYMBOLTYPE r = SymbolLookupMember(name, CastToObjectType(scopeType), outResult);
 					if (r != 0)
-					{
-						if (!checkAmbiguousSymbols)
-							return r;
-
-						if (isAmbiguousSymbol(name, errNode, resultSymbolType, r))
-							return SL_NOMATCH;
-					}
+						return r;
 				}
 
 				// Is it an enum type?
@@ -10720,15 +10661,10 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 					asCDataType dt;
 					if (builder->GetEnumValueFromType(CastToEnumType(scopeType), name.AddressOf(), dt, value))
 					{
-						if (isAmbiguousSymbol(name, errNode, resultSymbolType, SL_ENUMVAL))
-							return SL_NOMATCH;
-
 						// an enum value was resolved
 						outResult->type.SetConstantDW(dt, value);
 						outResult->symbolNamespace = ns;
-
-						if (!checkAmbiguousSymbols)
-							return resultSymbolType;
+						return SL_ENUMVAL;
 					}
 				}
 			}
@@ -10770,14 +10706,10 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 			if (r <= -3) return SL_ERROR;
 			if (r != 0)
 			{
-				if (isAmbiguousSymbol(name, errNode, resultSymbolType, SL_GLOBALPROPACCESS))
-					return SL_NOMATCH;
 				// The symbol matches getters/setters (though not necessarily a compilable match)
 				MergeExprBytecodeAndType(outResult, &access);
 				outResult->symbolNamespace = ns;
-
-				if (!checkAmbiguousSymbols)
-					return resultSymbolType;
+				return SL_GLOBALPROPACCESS;
 			}
 
 			// See if there is any matching global property
@@ -10794,25 +10726,15 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 				// initialized by literal constants.
 				if (isPureConstant)
 				{
-					if (isAmbiguousSymbol(name, errNode, resultSymbolType, SL_GLOBALCONST))
-						return SL_NOMATCH;
-
 					outResult->type.SetConstantData(prop->type, constantValue);
 					outResult->symbolNamespace = ns;
-
-					if (!checkAmbiguousSymbols)
-						return resultSymbolType;
+					return SL_GLOBALCONST;
 				}
 				else
 				{
-					if (isAmbiguousSymbol(name, errNode, resultSymbolType, SL_GLOBALVAR))
-						return SL_NOMATCH;
-
 					outResult->type.Set(prop->type);
 					outResult->symbolNamespace = ns;
-
-					if (!checkAmbiguousSymbols)
-						return resultSymbolType;
+					return SL_GLOBALVAR;
 				}
 			}
 		}
@@ -10826,21 +10748,12 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 
 			if (funcs.GetLength() > 0)
 			{
-				bool needCreateChild = resultSymbolType != SL_NOMATCH;
-
-				if (isAmbiguousSymbol(name, errNode, resultSymbolType, SL_GLOBALFUNC))
-					return SL_NOMATCH;
-
-				if(needCreateChild)
-				{
-					outResult->next = asNEW(asCExprContext)(engine);
-					outResult       = outResult->next;
-				}
 				// Defer the evaluation of which function until it is actually used
 				// Store the namespace and name of the function for later
 				outResult->type.SetUndefinedFuncHandle(engine);
 				outResult->methodName = ns ? ns->name + "::" + name : name;
 				outResult->symbolNamespace = ns;
+				return SL_GLOBALFUNC;
 			}
 		}
 
@@ -10850,12 +10763,8 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 			asCTypeInfo *type = builder->GetType(name.AddressOf(), ns, 0);
 			if (type)
 			{
-				if (isAmbiguousSymbol(name, errNode, resultSymbolType, SL_GLOBALTYPE))
-					return SL_NOMATCH;
-
 				outResult->type.dataType = asCDataType::CreateType(type, false);
-				if (!checkAmbiguousSymbols)
-					return resultSymbolType;
+				return SL_GLOBALTYPE;
 			}
 		}
 
@@ -10868,9 +10777,6 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 			int e = builder->GetEnumValue(name.AddressOf(), dt, value, ns);
 			if (e)
 			{
-				if (isAmbiguousSymbol(name, errNode, resultSymbolType, SL_ENUMVAL))
-					return SL_NOMATCH;
-
 				if (e == 2)
 				{
 					// Ambiguous enum value: Save the name for resolution later.
@@ -10882,16 +10788,15 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 					// cleanly as an integer.
 					outResult->type.SetConstantDW(asCDataType::CreatePrimitive(ttIdentifier, true), 0);
 					outResult->symbolNamespace = ns;
+					return SL_ENUMVAL;
 				}
 				else
 				{
 					// an enum value was resolved
 					outResult->type.SetConstantDW(dt, value);
 					outResult->symbolNamespace = ns;
+					return SL_ENUMVAL;
 				}
-
-				if (!checkAmbiguousSymbols)
-					return resultSymbolType;
 			}
 		}
 
@@ -10899,20 +10804,18 @@ asCCompiler::SYMBOLTYPE asCCompiler::SymbolLookup(const asCString &name, const a
 		if (scope.GetLength() >= 2 && scope[0] == ':')
 			break;
 
-		builder->AddVisibleNamespaces(currNamespace, visitedNamespaces, pendingNamespaces);
-
 		// Move up to parent namespace
-		currNamespace = builder->FindNextVisibleNamespace(currNamespace, visitedNamespaces, pendingNamespaces, &checkAmbiguousSymbols);
+		currNamespace = engine->GetParentNameSpace(currNamespace);
 	}
 
 	// The name doesn't match any symbol
-	return resultSymbolType;
+	return SL_NOMATCH;
 }
 
 int asCCompiler::CompileVariableAccess(const asCString &name, const asCString &scope, asCExprContext *ctx, asCScriptNode *errNode, bool isOptional, asCObjectType *objType)
 {
 	asCExprContext lookupResult(engine);
-	SYMBOLTYPE symbolType = SymbolLookup(name, scope, objType, &lookupResult, errNode);
+	SYMBOLTYPE symbolType = SymbolLookup(name, scope, objType, &lookupResult);
 	if (symbolType < 0)
 	{
 		// Give dummy value
@@ -11974,7 +11877,7 @@ int asCCompiler::CompileConversion(asCScriptNode *node, asCExprContext *ctx)
 		}
 
 		// Determine the requested type
-		to = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace, false, 0, true, 0, 0, &m_namespaceVisibility);
+		to = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace);
 		to.MakeReadOnly(true); // Default to const
 		asASSERT(to.IsPrimitive());
 	}
@@ -11988,7 +11891,7 @@ int asCCompiler::CompileConversion(asCScriptNode *node, asCExprContext *ctx)
 			anyErrors = true;
 
 		// Determine the requested type
-		to = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace, false, 0, true, 0, 0, &m_namespaceVisibility);
+		to = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace);
 
 		// If the type support object handles, then use it
 		if( to.SupportHandles() )
@@ -12267,7 +12170,7 @@ int asCCompiler::CompileConstructCall(asCScriptNode *node, asCExprContext *ctx)
 
 	// It is possible that the name is really a constructor
 	asCDataType dt;
-	dt = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace, false, outFunc->objectType, true, 0, 0, &m_namespaceVisibility);
+	dt = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace, false, outFunc->objectType);
 	if( dt.IsPrimitive() )
 	{
 		// This is a cast to a primitive type
@@ -12606,7 +12509,7 @@ int asCCompiler::InstantiateTemplateFunctions(asCArray<int>& funcs, asCScriptNod
 		// (or if there is more than one template function with the same name, then use only the one that matches)
 		for (asUINT j = 0; j < numTypes; j++)
 		{
-			dataTypes.PushLast(builder->CreateDataTypeFromNode(types, script, func->nameSpace, func->objectType, 0, true, 0, 0, &m_namespaceVisibility));
+			dataTypes.PushLast(builder->CreateDataTypeFromNode(types, script, func->nameSpace, func->objectType));
 			types = types->next;
 		}
 		funcs[i] = engine->GetTemplateFunctionInstance(func, dataTypes);
@@ -12632,7 +12535,7 @@ int asCCompiler::CompileFunctionCall(asCScriptNode *node, asCExprContext *ctx, a
 	// Find the matching entities
 	// If objectType is set then this is a post op expression and we shouldn't look for local variables
 	asCExprContext lookupResult(engine);
-	SYMBOLTYPE symbolType = SymbolLookup(name, scope, objectType, &lookupResult, node);
+	SYMBOLTYPE symbolType = SymbolLookup(name, scope, objectType, &lookupResult);
 	if (symbolType < 0)
 		return -1;
 	if (symbolType == SL_NOMATCH)
@@ -12805,14 +12708,11 @@ int asCCompiler::CompileFunctionCall(asCScriptNode *node, asCExprContext *ctx, a
 	if (symbolType == SL_GLOBALFUNC)
 	{
 		// The symbol lookup identified the namespace to use
-		for (asCExprContext* exprCtx = &lookupResult; exprCtx; exprCtx = exprCtx->next)
-		{
-			int n            = exprCtx->methodName.FindLast("::");
-			asSNameSpace* ns = engine->FindNameSpace(exprCtx->methodName.SubString(0, n).AddressOf());
+		int n = lookupResult.methodName.FindLast("::");
+		asSNameSpace *ns = engine->FindNameSpace(lookupResult.methodName.SubString(0, n).AddressOf());
 
-			builder->GetFunctionDescriptions(name.AddressOf(), funcs, ns);
-		}
-
+		builder->GetFunctionDescriptions(name.AddressOf(), funcs, ns);
+		
 		// Instantiate all template functions
 		asCScriptNode* datatypeNode = node->firstChild->next;
 		if (datatypeNode->nodeType == snIdentifier) datatypeNode = datatypeNode->next;
@@ -12824,7 +12724,7 @@ int asCCompiler::CompileFunctionCall(asCScriptNode *node, asCExprContext *ctx, a
 	if (symbolType == SL_CLASSTYPE || symbolType == SL_GLOBALTYPE)
 	{
 		bool isValid = false;
-		asCDataType dt = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace, false, outFunc->objectType, false, &isValid, 0, &m_namespaceVisibility);
+		asCDataType dt = builder->CreateDataTypeFromNode(node->firstChild, script, outFunc->nameSpace, false, outFunc->objectType, false, &isValid);
 		if (isValid)
 			return CompileConstructCall(node, ctx);
 	}
@@ -17764,7 +17664,6 @@ void asCExprValue::SetDummy()
 asCExprContext::asCExprContext(asCScriptEngine *engine) : bc(engine)
 {
 	property_arg = 0;
-	next = 0;
 
 	Clear();
 }
@@ -17773,9 +17672,6 @@ asCExprContext::~asCExprContext()
 {
 	if (property_arg)
 		asDELETE(property_arg, asCExprContext);
-
-	if (next)
-		asDELETE(next, asCExprContext);
 }
 
 void asCExprContext::Clear()
@@ -17800,10 +17696,6 @@ void asCExprContext::Clear()
 	isCleanArg = false;
 	isAnonymousInitList = false;
 	origCode = 0;
-
-	if (next)
-		asDELETE(next, asCExprContext);
-	next = 0;
 }
 
 bool asCExprContext::IsClassMethod() const

@@ -88,7 +88,6 @@ enum eScriptNode
 	snFuncDef,
 	snVirtualProperty,
 	snNamespace,
-	snUsing,
 	snMixin,
 	snListPattern,
 	snNamedArgument,

@@ -23,6 +23,112 @@ bool Test()
 	asIScriptContext *ctx;
 	asIScriptModule *mod;
 
+	// Test modifying the dictionary while doing a foreach
+	{
+		engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+
+		RegisterStdString(engine);
+		RegisterScriptArray(engine, false);
+		RegisterScriptDictionary(engine);
+
+		engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
+
+		mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test", R"(
+void test() 
+{
+	dictionary dict = {{'a',1},{'b',2},{'c',3}};
+	string keys, values;
+	foreach( auto val, auto key : dict )
+	{
+		if( key == 'b' ) dict.delete(key);  // this will make the iter loose its anchor, but it must not crash the application
+		values += int(val);
+		keys += key;
+	}
+	
+	assert( values.length() != 3 );
+	assert( keys.length() != 3 );
+}
+)");
+		r = mod->Build();
+		if (r < 0)
+			TEST_FAILED;
+
+		ctx = engine->CreateContext();
+		r = ExecuteString(engine, "test()", mod, ctx);
+		if (r != asEXECUTION_FINISHED)
+		{
+			if (r == asEXECUTION_EXCEPTION)
+				PRINTF("%s", GetExceptionInfo(ctx).c_str());
+			TEST_FAILED;
+		}
+		ctx->Release();
+
+		if (bout.buffer != "")
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+
+		engine->ShutDownAndRelease();
+	}
+
+	// Test foreach with dictionary
+	{
+		engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+
+		RegisterStdString(engine);
+		RegisterScriptArray(engine, false);
+		RegisterScriptDictionary(engine);
+
+		engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
+
+		mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test", R"(
+void test() 
+{
+	dictionary dict = {{'a',1},{'b',2},{'c',3}};
+	array<string> keys;
+	array<int> values;
+	foreach( auto val, auto key : dict )
+	{
+		values.insertLast(int(val));
+		keys.insertLast(key);
+	}
+	
+	values.sortAsc();
+	keys.sortAsc();
+	assert( values == {1,2,3} );
+	assert( keys == {'a','b','c'} );
+}
+)");
+		r = mod->Build();
+		if (r < 0)
+			TEST_FAILED;
+
+		ctx = engine->CreateContext();
+		r = ExecuteString(engine, "test()", mod, ctx);
+		if (r != asEXECUTION_FINISHED)
+		{
+			if (r == asEXECUTION_EXCEPTION)
+				PRINTF("%s", GetExceptionInfo(ctx).c_str());
+			TEST_FAILED;
+		}
+		ctx->Release();
+
+		if (bout.buffer != "")
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+
+		engine->ShutDownAndRelease();
+	}
+
 	// Test setting dictionary element with class that doesn't have default constructor, but has a copy constructor taking a handle
 	// https://www.gamedev.net/forums/topic/699620-error-when-assigning-script-object-to-dictionary/
 	{
@@ -30,7 +136,7 @@ bool Test()
 		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
 		bout.buffer = "";
 
-		RegisterStdString(engine); // Register string type as ref type
+		RegisterStdString(engine);
 		RegisterScriptArray(engine, false);
 		RegisterScriptDictionary(engine);
 

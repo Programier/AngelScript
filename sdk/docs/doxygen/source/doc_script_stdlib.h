@@ -259,6 +259,8 @@ If no match is found the methods will return a negative value.
 The syntax for using dictionaries may differ for the application you're working with so consult the application's manual
 for more details.
 
+\todo Explain the foreach support
+
 The dictionary stores key-value pairs, where the key is a string, and the value can be of any type. Key-value
 pairs can be added or removed dynamically, making the dictionary a good general purpose container object.
 
@@ -408,6 +410,8 @@ an uninitialized value of the desired type is returned.
 
 
 \page doc_script_stdlib_string string
+
+\todo Add format and scan
 
 \note Strings are only available in the scripts if the application \ref doc_addon_std_string "registers the support for them". 
 The syntax for using strings may differ for the application you're working with so consult the application's manual

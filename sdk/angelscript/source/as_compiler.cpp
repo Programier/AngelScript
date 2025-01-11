@@ -2272,7 +2272,7 @@ int asCCompiler::PrepareFunctionCall(int funcId, asCByteCode *bc, asCArray<asCEx
 	// When a match has been found, compile the final byte code using correct parameter types
 	asCScriptFunction *descr = builder->GetFunctionDescription(funcId);
 
-	asASSERT( descr->parameterTypes.GetLength() == args.GetLength() );
+	asASSERT( (descr->IsVariadic() && args.GetLength() >= descr->parameterTypes.GetLength() - 1) || descr->parameterTypes.GetLength() == args.GetLength() );
 
 	// If the function being called is the opAssign or copy constructor for the same type
 	// as the argument, then we should avoid making temporary copy of the argument
@@ -2293,7 +2293,14 @@ int asCCompiler::PrepareFunctionCall(int funcId, asCByteCode *bc, asCArray<asCEx
 		for( int m = n; m >= 0; m-- )
 			args[m]->bc.GetVarsUsed(reservedVariables);
 
-		int r = PrepareArgument2(&e, args[n], &descr->parameterTypes[n], true, descr->inOutFlags[n], makingCopy);
+		asUINT realParamIdx = n;
+		if (descr->IsVariadic())
+		{
+			if (n >= (int)descr->parameterTypes.GetLength() - 1)
+				realParamIdx = descr->parameterTypes.GetLength() - 1;
+		}
+
+		int r = PrepareArgument2(&e, args[n], &descr->parameterTypes[realParamIdx], true, descr->inOutFlags[realParamIdx], makingCopy);
 		reservedVariables.SetLength(l);
 
 		if (r < 0)
@@ -2317,6 +2324,9 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 	if( descr->DoesReturnOnStack() )
 		offset += AS_PTR_SIZE;
 
+	if (descr->IsVariadic())
+		offset += 1;
+
 #ifdef AS_DEBUG
 	// If the function being called is the opAssign or copy constructor for the same type
 	// as the argument, then we should avoid making temporary copy of the argument
@@ -2329,13 +2339,17 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 #endif
 
 	// Move the objects that are sent by value to the stack just before the call
-	for( asUINT n = 0; n < descr->parameterTypes.GetLength(); n++ )
+	for( asUINT n = 0; n < args.GetLength(); n++ )
 	{
-		if( descr->parameterTypes[n].IsReference() )
+		asUINT realParamIdx = n;
+		if (descr->IsVariadic() && n >= descr->parameterTypes.GetLength() - 1)
+			realParamIdx = descr->parameterTypes.GetLength() - 1;
+		
+		if( descr->parameterTypes[realParamIdx].IsReference() )
 		{
-			if( (descr->parameterTypes[n].IsObject() || descr->parameterTypes[n].IsFuncdef()) && !descr->parameterTypes[n].IsObjectHandle() )
+			if( (descr->parameterTypes[realParamIdx].IsObject() || descr->parameterTypes[realParamIdx].IsFuncdef()) && !descr->parameterTypes[realParamIdx].IsObjectHandle() )
 			{
-				if( descr->inOutFlags[n] != asTM_INOUTREF && !args[n]->type.isRefSafe )
+				if( descr->inOutFlags[realParamIdx] != asTM_INOUTREF && !args[n]->type.isRefSafe )
 				{
 #ifdef AS_DEBUG
 					// This assert is inside AS_DEBUG because of the variable makingCopy which is only defined in debug mode
@@ -2355,14 +2369,14 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 				if( args[n]->type.dataType.IsObjectHandle() )
 					bc->InstrWORD(asBC_ChkNullS, (asWORD)offset);
 			}
-			else if( descr->inOutFlags[n] != asTM_INOUTREF )
+			else if( descr->inOutFlags[realParamIdx] != asTM_INOUTREF )
 			{
 				// If the argument is already known to be safe, i.e. has a guaranteed lifetime,
 				// then the address on the stack is already pointing to the correct object so no
 				// need to do anything else
 				if (!args[n]->type.isRefSafe)
 				{
-					if (descr->parameterTypes[n].GetTokenType() == ttQuestion &&
+					if (descr->parameterTypes[realParamIdx].GetTokenType() == ttQuestion &&
 						(args[n]->type.dataType.IsObject() || args[n]->type.dataType.IsFuncdef()) &&
 						!args[n]->type.dataType.IsObjectHandle())
 					{
@@ -2375,7 +2389,7 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 						else
 							bc->InstrWORD(asBC_GETOBJREF, (asWORD)offset);
 					}
-					else if (descr->parameterTypes[n].GetTokenType() == ttQuestion &&
+					else if (descr->parameterTypes[realParamIdx].GetTokenType() == ttQuestion &&
 						args[n]->type.dataType.IsObjectHandle() && !args[n]->type.isExplicitHandle)
 					{
 						// The object handle is being passed as an object, so dereference it before
@@ -2401,7 +2415,7 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 				}
 			}
 		}
-		else if( descr->parameterTypes[n].IsObject() || descr->parameterTypes[n].IsFuncdef() )
+		else if( descr->parameterTypes[realParamIdx].IsObject() || descr->parameterTypes[realParamIdx].IsFuncdef() )
 		{
 			asASSERT(!args[n]->type.isRefSafe);
 
@@ -2418,7 +2432,7 @@ void asCCompiler::MoveArgsToStack(int funcId, asCByteCode *bc, asCArray<asCExprC
 			args[n]->type.isTemporary = false;
 		}
 
-		offset += descr->parameterTypes[n].GetSizeOnStackDWords();
+		offset += descr->parameterTypes[realParamIdx].GetSizeOnStackDWords();
 	}
 }
 
@@ -2671,11 +2685,21 @@ asUINT asCCompiler::MatchFunctions(asCArray<int> &funcs, asCArray<asCExprContext
 
 		for( n = 0; n < funcs.GetLength(); ++n )
 		{
+			bool noMatch = false;
 			asCScriptFunction *desc = builder->GetFunctionDescription(funcs[n]);
-
-			if( desc->parameterTypes.GetLength() != totalArgs )
+			if (desc->IsVariadic())
 			{
-				bool noMatch = true;
+				asASSERT(desc->parameterTypes.GetLength() >= 1);
+				asUINT argsWithoutLast = desc->parameterTypes.GetLength() - 1;
+
+				// TODO: variadic: Handle default args
+
+				if (totalArgs <= argsWithoutLast)
+					noMatch = true;
+			}
+			else if( desc->parameterTypes.GetLength() != totalArgs )
+			{
+				noMatch = true;
 				if( totalArgs < desc->parameterTypes.GetLength() )
 				{
 					// For virtual functions, the default args are defined in the real function of the object
@@ -2691,16 +2715,16 @@ asUINT asCCompiler::MatchFunctions(asCArray<int> &funcs, asCArray<asCExprContext
 					if( totalArgs >= desc->parameterTypes.GetLength() - defaultArgs )
 						noMatch = false;
 				}
+			}
 
-				if( noMatch )
-				{
-					// remove it from the list
-					if( n == funcs.GetLength()-1 )
-						funcs.PopLast();
-					else
-						funcs[n] = funcs.PopLast();
-					n--;
-				}
+			if( noMatch )
+			{
+				// remove it from the list
+				if( n == funcs.GetLength()-1 )
+					funcs.PopLast();
+				else
+					funcs[n] = funcs.PopLast();
+				n--;
 			}
 		}
 
@@ -7549,6 +7573,10 @@ asUINT asCCompiler::ImplicitConversion(asCExprContext *ctx, const asCDataType &t
 		      ctx->type.dataType.IsNullHandle() ||
 		      ctx->IsAnonymousInitList() );
 
+	// No conversion to null handle
+	if (to.IsNullHandle())
+		return asCC_NO_CONV;
+
 	if( to.IsFuncdef() && ctx->IsLambda() )
 		return ImplicitConvLambdaToFunc(ctx, to, node, convType, generateCode);
 
@@ -8465,6 +8493,8 @@ asUINT asCCompiler::ImplicitConvObjectToObject(asCExprContext *ctx, const asCDat
 		{
 			if( generateCode )
 			{
+				DetermineSingleFunc(ctx, node);
+
 				asASSERT( ctx->type.dataType.IsObjectHandle() );
 
 				// If the input type is a handle, then a simple ref copy is enough
@@ -12017,25 +12047,29 @@ void asCCompiler::AfterFunctionCall(int funcID, asCArray<asCExprContext*> &args,
 	// to the evaluated expression if it is an lvalue
 
 	// Evaluate the arguments from last to first
-	int n = (int)descr->parameterTypes.GetLength() - 1;
+	int n = (int)args.GetLength() - 1;
 	for( ; n >= 0; n-- )
 	{
+		asUINT realParamIdx = n;
+		if (descr->IsVariadic() && n >= (int)descr->parameterTypes.GetLength() - 1)
+			realParamIdx = descr->parameterTypes.GetLength() - 1;
+		
 		// All &out arguments must be deferred, except if the argument is clean, in which case the actual reference was passed in to the function
 		// If deferAll is set all objects passed by reference or handle must be deferred
-		if( (descr->parameterTypes[n].IsReference() && (descr->inOutFlags[n] & asTM_OUTREF) && !args[n]->isCleanArg) ||
-			(descr->parameterTypes[n].IsObject() && deferAll && (descr->parameterTypes[n].IsReference() || descr->parameterTypes[n].IsObjectHandle())) )
+		if( (descr->parameterTypes[realParamIdx].IsReference() && (descr->inOutFlags[realParamIdx] & asTM_OUTREF) && !args[realParamIdx]->isCleanArg) ||
+			(descr->parameterTypes[realParamIdx].IsObject() && deferAll && (descr->parameterTypes[realParamIdx].IsReference() || descr->parameterTypes[realParamIdx].IsObjectHandle())) )
 		{
-			asASSERT( !(descr->parameterTypes[n].IsReference() && (descr->inOutFlags[n] == asTM_OUTREF) && !args[n]->isCleanArg) || args[n]->origExpr );
+			asASSERT( !(descr->parameterTypes[realParamIdx].IsReference() && (descr->inOutFlags[realParamIdx] == asTM_OUTREF) && !args[realParamIdx]->isCleanArg) || args[realParamIdx]->origExpr );
 
 			// For &inout, only store the argument if it is for a temporary variable
 			if( engine->ep.allowUnsafeReferences ||
-				descr->inOutFlags[n] != asTM_INOUTREF || args[n]->type.isTemporary )
+				descr->inOutFlags[realParamIdx] != asTM_INOUTREF || args[realParamIdx]->type.isTemporary )
 			{
 				// Store the argument for later processing
 				asSDeferredParam outParam;
 				outParam.argNode = args[n]->exprNode;
 				outParam.argType = args[n]->type;
-				outParam.argInOutFlags = descr->inOutFlags[n];
+				outParam.argInOutFlags = descr->inOutFlags[realParamIdx];
 				outParam.origExpr = args[n]->origExpr;
 
 				ctx->deferredParams.PushLast(outParam);
@@ -14534,7 +14568,13 @@ asUINT asCCompiler::MatchArgument(asCArray<int> &funcs, asCArray<asSOverloadCand
 		asCScriptFunction *desc = builder->GetFunctionDescription(funcs[n]);
 
 		// Does the function have arguments enough?
-		if( (int)desc->parameterTypes.GetLength() <= paramNum )
+		asUINT paramCount = desc->parameterTypes.GetLength();
+		if (desc->IsVariadic())
+		{
+			asASSERT(paramCount >= 1);
+			paramCount -= 1;
+		}
+		if( (int)paramCount <= paramNum && !desc->IsVariadic())
 			continue;
 
 		int cost = MatchArgument(desc, argExpr, paramNum, allowObjectConstruct);
@@ -14547,6 +14587,11 @@ asUINT asCCompiler::MatchArgument(asCArray<int> &funcs, asCArray<asSOverloadCand
 
 int asCCompiler::MatchArgument(asCScriptFunction *desc, const asCExprContext *argExpr, int paramNum, bool allowObjectConstruct)
 {
+	if (desc->IsVariadic() && paramNum >= (int)desc->parameterTypes.GetLength() - 1)
+	{
+		paramNum = (int)desc->parameterTypes.GetLength() - 1;
+	}
+
 	// void expressions can match any out parameter, but nothing else
 	if( argExpr->IsVoidExpression() )
 	{
@@ -15084,6 +15129,8 @@ int asCCompiler::MakeFunctionCall(asCExprContext *ctx, int funcId, asCObjectType
 	if( objectType )
 		Dereference(ctx, true);
 
+	asCScriptFunction* descr = builder->GetFunctionDescription(funcId);
+
 	// Store the expression node for error reporting
 	if( ctx->exprNode == 0 )
 		ctx->exprNode = node;
@@ -15092,6 +15139,11 @@ int asCCompiler::MakeFunctionCall(asCExprContext *ctx, int funcId, asCObjectType
 	objBC.AddCode(&ctx->bc);
 
 	int r = PrepareFunctionCall(funcId, &ctx->bc, args);
+	if (descr->IsVariadic())
+	{
+		// Argument count
+		ctx->bc.InstrDWORD(asBC_PshC4, (asDWORD)args.GetLength());
+	}
 	if (r < 0)
 		return r;
 
@@ -16869,9 +16921,9 @@ void asCCompiler::CompileOperatorOnHandles(asCScriptNode *node, asCExprContext *
 
 	// Implicitly convert null to the other type
 	asCDataType to;
-	if( lctx->type.IsNullConstant() )
+	if( lctx->type.dataType.IsNullHandle() )
 		to = rctx->type.dataType;
-	else if( rctx->type.IsNullConstant() )
+	else if( rctx->type.dataType.IsNullHandle() )
 		to = lctx->type.dataType;
 	else
 	{

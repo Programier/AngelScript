@@ -7048,7 +7048,7 @@ bool asCCompiler::CompileRefCast(asCExprContext *ctx, const asCDataType &to, boo
 
 	// If the script object didn't implement a matching opCast or opImplCast
 	// then check if the desired type is part of the hierarchy
-	if( !conversionDone && (ctx->type.dataType.GetTypeInfo()->flags & asOBJ_SCRIPT_OBJECT) )
+	if( !conversionDone && (ctx->type.dataType.GetTypeInfo()->flags & (asOBJ_SCRIPT_OBJECT | asOBJ_APP_NATIVE_INHERITANCE)) )
 	{
 		// We need it to be a reference
 		if( !ctx->type.dataType.IsReference() )

@@ -1117,13 +1117,13 @@ void asCScriptObject::CopyObject(const void *src, void *dst, asCObjectType *in_o
 void asCScriptObject::CopyHandle(asPWORD *src, asPWORD *dst, asCObjectType *in_objType, asCScriptEngine *engine)
 {
 	// asOBJ_NOCOUNT doesn't have addref or release behaviours
-    asASSERT( (in_objType->flags & asOBJ_NOCOUNT) || (in_objType->beh.release && in_objType->beh.addref) );
+	asASSERT((in_objType->flags & asOBJ_NOCOUNT) || (in_objType->beh.release && in_objType->beh.addref));
 
-    if( *dst && in_objType->beh.release )
-        engine->CallObjectMethod(*(void**)dst, in_objType->beh.release);
+	if (*dst && in_objType->beh.release)
+		engine->CallObjectMethod(*(void**) dst, in_objType->beh.release);
 	*dst = *src;
-    if( *dst && in_objType->beh.addref )
-        engine->CallObjectMethod(*(void**)dst, in_objType->beh.addref);
+	if (*dst && in_objType->beh.addref)
+		engine->CallObjectMethod(*(void**) dst, in_objType->beh.addref);
 }
 
 // TODO: weak: Should move to its own file

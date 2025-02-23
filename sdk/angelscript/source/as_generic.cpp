@@ -761,48 +761,6 @@ void* asCGenericVariadic::GetAddressOfReturnLocation()
 	return &returnVal;
 }
 
-int asCGenericVariadic::SetReturnObject(void* obj)
-{
-	asCDataType* dt = &sysFunction->returnType;
-	if (!dt->IsObject() && !dt->IsFuncdef())
-		return asINVALID_TYPE;
-
-	if (dt->IsReference())
-	{
-		*(void**)&returnVal = obj;
-		return 0;
-	}
-
-	if (dt->IsObjectHandle())
-	{
-		// Increase the reference counter
-		if (dt->IsFuncdef())
-		{
-			if (obj)
-				reinterpret_cast<asIScriptFunction*>(obj)->AddRef();
-		}
-		else
-		{
-			asSTypeBehaviour* beh = &CastToObjectType(dt->GetTypeInfo())->beh;
-			if (obj && beh && beh->addref)
-				engine->CallObjectMethod(obj, beh->addref);
-		}
-	}
-	else
-	{
-		// If function returns object by value the memory is already allocated.
-		// Here we should just initialize that memory by calling the copy constructor
-		// or the default constructor followed by the assignment operator
-		void* mem = (void*)*(asPWORD*)&stackPointer[-(AS_PTR_SIZE + 1)];
-		engine->ConstructScriptObjectCopy(mem, obj, CastToObjectType(dt->GetTypeInfo()));
-		return 0;
-	}
-
-	objectRegister = obj;
-
-	return 0;
-}
-
 asCDataType* asCGenericVariadic::GetArgDataType(asUINT arg) const
 {
 	if (arg >= sysFunction->parameterTypes.GetLength() - 1)

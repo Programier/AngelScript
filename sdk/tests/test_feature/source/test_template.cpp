@@ -250,9 +250,21 @@ void do_smth(asIScriptGeneric* gen)
 	do_smth_called_correctly = gen->GetArgTypeId(0) == asTYPEID_INT32 && arg == 100 && (*obj) == "Success";
 }
 
-void q2as_test_bug(asIScriptGeneric* gen) 
+void q2as_test_bug(asIScriptGeneric* /* gen */)
 {
 
+}
+
+static void ScriptTestGen(asIScriptGeneric* gen)
+{
+	gen->SetReturnDWord(gen->GetArgDWord(0));
+}
+
+bool error = false;
+void print(void* p, int typeId)
+{
+	error = error || (typeId != asTYPEID_INT32);
+	error = error || (*(int*)p != 10);
 }
 
 bool Test()
@@ -263,6 +275,115 @@ bool Test()
 	int r;
 	COutStream out;
 	CBufferedOutStream bout;
+
+	// Test saving bytecode with template functions
+	// https://www.gamedev.net/forums/topic/718083-template-functions-pre-compiled-byte-code/
+	{
+		asIScriptEngine* engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+		engine->RegisterGlobalFunction("T Test<T>(T v)", asFUNCTION(ScriptTestGen), asCALL_GENERIC);
+		engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
+
+		asIScriptModule* mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test",
+			"void testfunc() \n"
+			"{ \n"
+			"	auto n = Test<int>(10); \n"
+			"   assert( n == 10 ); \n"
+			"} \n");
+		r = mod->Build();
+		if (r < 0)
+			TEST_FAILED;
+
+		CBytecodeStream st("test");
+		r = mod->SaveByteCode(&st);
+		if (r < 0)
+			TEST_FAILED;
+
+		engine->ShutDownAndRelease();
+
+		engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+		engine->RegisterGlobalFunction("T Test<T>(T v)", asFUNCTION(ScriptTestGen), asCALL_GENERIC);
+		engine->RegisterGlobalFunction("void assert(bool)", asFUNCTION(Assert), asCALL_GENERIC);
+
+		mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		r = mod->LoadByteCode(&st);
+		if (r < 0)
+			TEST_FAILED;
+
+		r = ExecuteString(engine, "testfunc()", mod);
+		if (r != asEXECUTION_FINISHED)
+			TEST_FAILED;
+
+		engine->ShutDownAndRelease();
+
+		if (bout.buffer != "")
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+	}
+
+	// https://www.gamedev.net/forums/topic/717373-support-for-template-functions-is-now-implemented-in-2380-wip/5466542/
+	{
+		asIScriptEngine* engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+		engine->RegisterGlobalFunction("T Test<T>(T v)", asFUNCTION(ScriptTestGen), asCALL_GENERIC);
+		engine->RegisterGlobalFunction("void print(?&in)", asFUNCTION(print), asCALL_CDECL);
+
+		r = ExecuteString(engine, 
+			"auto n = Test<int>(10);\n"
+			"print(n); \n"// This works and will print 10.
+			"print(Test<int>(10));\n" // This forces typeId to be 10, and the print function fails
+		);
+		if (r != asEXECUTION_FINISHED)
+			TEST_FAILED;
+
+		if (error)
+			TEST_FAILED;
+
+		engine->ShutDownAndRelease();
+
+		if (bout.buffer != "")
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+	}
+
+	// Test passing a null argument to a template function
+	// Reported by Paril
+	{
+		asIScriptEngine* engine = asCreateScriptEngine();
+		engine->SetMessageCallback(asMETHOD(CBufferedOutStream, Callback), &bout, asCALL_THISCALL);
+		bout.buffer = "";
+		RegisterStdString(engine);
+		engine->RegisterGlobalFunction("T @+find_by_str<T>(T @+from, const string &in member, const string &in value)", asFUNCTION(0), asCALL_GENERIC);
+
+		asIScriptModule* mod = engine->GetModule("test", asGM_ALWAYS_CREATE);
+		mod->AddScriptSection("test",
+			"void testfunc() \n"
+			"{ \n"
+			"	find_by_str(null, '', ''); \n"  // Compiler cannot deduce the type from a null pointer
+			"} \n");
+		r = mod->Build();
+		if (r >= 0)
+			TEST_FAILED;
+
+		engine->ShutDownAndRelease();
+
+		if (bout.buffer != "test (1, 1) : Info    : Compiling void testfunc()\n"
+						   "test (3, 13) : Error   : Template 'find_by_str' expects 1 sub type(s)\n")
+		{
+			PRINTF("%s", bout.buffer.c_str());
+			TEST_FAILED;
+		}
+	}
+
 
 	// Make sure object types are correctly released
 	// Reported by Paril
@@ -293,6 +414,7 @@ bool Test()
 			TEST_FAILED;
 
 		asITypeInfo *type = mod->GetTypeInfoByName("ASEntity2");
+		assert(type);
 
 		r = ExecuteString(engine, "testfunc()", mod);
 		if (r != asEXECUTION_FINISHED)

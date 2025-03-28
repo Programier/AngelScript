@@ -15,7 +15,7 @@ BODY { FONT-SIZE: 12px; FONT-FAMILY: Arial; }
 
 <h1>AngelScript Change Log</h1>
 
-<h2>Version 2.38.0 WIP - 2025/02/22</h2>
+<h2>Version 2.38.0 WIP - 2025/03/25</h2>
 
 <ul>
 <li>Bug fixes
@@ -43,6 +43,17 @@ BODY { FONT-SIZE: 12px; FONT-FAMILY: Arial; }
 <li>Fixed invalid loop in FindNextFunctionCalled that could read out of bounds (Thanks Paril)
 <li>Fixed compilation error in as_callfunc.cpp on gcc 12 (Thanks Klaus Silveira)
 <li>Fixed crash in asIScriptGeneric::SetReturnObject for variadic functions (Thanks Programier)
+<li>Fixed crash in bytecode loader when it tries to translate a list factory in invalid bytecode (Thanks Peter Wester)
+<li>Fixed crash in compiler when attempting to use template function without informing the subtypes (Thanks Paril)
+<li>Fixed invalid bytecode when passing function pointer to functions expecting ?&amp; (Thanks Paril)
+<li>Fixed error for invalid scripts attempting to pass anonymous functions to functions expecting ?&amp; (Thanks Paril)
+<li>Fixed lookup of template subtypes when registering child funcdefs with different namespace set (Thanks Remy Stivani)
+<li>Fixed crash in CreateScriptObject with asCALL_CDECL_OBJFIRST|LAST and auxiliary pointer (Thanks bhair)
+<li>Fixed issue in asIScriptModule::SetDefaultNamespace with nested namespaces (Thanks Programier)
+<li>Fixed implicit conversion to value type when the expression is a const of the same value type (Thanks Jan Krassnigg)
+<li>Fixed invalid access of inherited member before it is initialized by parent constructor (Thanks Sam Tupy)
+<li>Fixed crash on compiling function with funcdef by value as parameter type (Thanks Sam Tupy)
+<li>Fixed saving bytecode with template functions (Thanks killermud1)
 </ul>
 <li>Library
 <ul>
@@ -60,6 +71,9 @@ BODY { FONT-SIZE: 12px; FONT-FAMILY: Arial; }
 <li>Deprecated GetStringFactoryReturnTypeId, and implemented GetStringFactory instead (Thanks HenryAWE)
 <li>Included GetSubTypeCount, GetSubTypeId, GetSubType to asIScriptFunction for template functions
 <li>Changed the destructor of asIScriptFactory to public as it doesn't have to be reference counted (Thanks Jan Krassnigg)
+<li>asITypeInfo::GetProperty now returns info on constness (Thanks Paril)
+<li>SetTranslateAppExceptionCallback, SetLineCallback, SetExceptionCallback now take asSFuncPtr by ref for consistency (Thanks HenryAWE)
+<li>Added GetMessageCallback (Thanks Sam Tupy)
 </ul>
 <li>Script language
 <ul>

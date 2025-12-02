@@ -102,8 +102,10 @@ public:
 
 	// Type registration
 	virtual int            RegisterObjectType(const char *obj, int byteSize, asQWORD flags);
+	virtual int            RegisterObjectBaseType(const char* obj, const char* base);
 	virtual int            RegisterObjectProperty(const char *obj, const char *declaration, int byteOffset, int compositeOffset = 0, bool isCompositeIndirect = false);
 	virtual int            RegisterObjectMethod(const char *obj, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false);
+	virtual asCScriptFunction* CreateVirtualFunction(asCScriptFunction *func, int idx); 
 	virtual int            RegisterObjectBehaviour(const char *obj, asEBehaviours behaviour, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false);
 	virtual int            RegisterInterface(const char *name);
 	virtual int            RegisterInterfaceMethod(const char *intf, const char *declaration);
@@ -229,9 +231,9 @@ public:
 	int RegisterBehaviourToObjectType(asCObjectType *objectType, asEBehaviours behaviour, const char *decl, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false);
 
 	int VerifyVarTypeNotInFunction(asCScriptFunction *func);
-
-	void *CallAlloc(const asCObjectType *objType) const;
-	void  CallFree(void *obj) const;
+	
+	static void *CallAlloc(const asCObjectType *objType);
+	static void  CallFree(void *obj);
 
 	void *CallGlobalFunctionRetPtr(int func) const;
 	void *CallGlobalFunctionRetPtr(int func, void *param1) const;

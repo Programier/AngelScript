@@ -47,6 +47,7 @@
 BEGIN_AS_NAMESPACE
 
 class asCObjectType;
+class asCScriptEngine;
 
 // TODO: Add const overload for GetAddressOfProperty
 
@@ -70,49 +71,54 @@ protected:
 	DECLARECRITICALSECTION(mutable lock)
 };
 
+struct alignas(8) asCScriptObjectData : public asIScriptObject
+{
+private:
+	// Most script classes instances won't have neither the weakRefFlags nor
+	// userData so we only allocate this if requested. Even when used it is
+	// not something that will be accessed all the time so having the extra
+	// indirection will not affect the performance significantly.
+	struct SExtra
+	{
+		SExtra() : weakRefFlag(0) {};
+		asCLockableSharedBool *weakRefFlag;
+	};
+	
+	asCObjectType*	  objectType;
+	mutable SExtra*	  extra;
+	
+	mutable asCAtomic refCount;
+	mutable asBYTE    gcFlag:1;
+	mutable asBYTE    hasRefCountReachedZero:1;
+	bool              isDestructCalled;
+
+public:
+    asCScriptObjectData(asCObjectType* ot);
+    int AddRef() const override;
+    int Release() const override;
+    asILockableSharedBool* GetWeakRefFlag() const override;
+    int GetRefCount() override;
+    void SetGCFlag() override;
+    bool GetGCFlag() override;
+    asITypeInfo* GetObjectType() const override;
+    int CopyFrom(const asIScriptObject* other) override;
+
+    ~asCScriptObjectData();
+	friend class asCScriptObject;
+};
+
 class asCScriptObject : public asIScriptObject
 {
 public:
-//===================================
-// From asIScriptObject
-//===================================
-
-	// Memory management
-	int                    AddRef() const;
-	int                    Release() const;
-	asILockableSharedBool *GetWeakRefFlag() const;
-
-	// Type info
-	int            GetTypeId() const;
-	asITypeInfo   *GetObjectType() const;
-
-	// Class properties
-	asUINT      GetPropertyCount() const;
-	int         GetPropertyTypeId(asUINT prop) const;
-	const char *GetPropertyName(asUINT prop) const;
-	void       *GetAddressOfProperty(asUINT prop);
-
-	// Miscellaneous
-	asIScriptEngine *GetEngine() const;
-	int              CopyFrom(const asIScriptObject *other);
-
-	// User data
-	void *SetUserData(void *data, asPWORD type = 0);
-	void *GetUserData(asPWORD type = 0) const;
-
 //====================================
 // Internal
 //====================================
-	asCScriptObject(asCObjectType *objType, bool doInitialize = true);
-	virtual ~asCScriptObject();
+	void init(asCObjectType* objType, bool doInitialize = true);
 
 	asCScriptObject &operator=(const asCScriptObject &other);
 
 	// GC methods
 	void Destruct();
-	int  GetRefCount();
-	void SetFlag();
-	bool GetFlag();
 	void EnumReferences(asIScriptEngine *engine);
 	void ReleaseAllHandles(asIScriptEngine *engine);
 
@@ -122,42 +128,21 @@ public:
 	void CopyObject(const void *src, void *dst, asCObjectType *objType, asCScriptEngine *engine);
 	void CopyHandle(asPWORD *src, asPWORD *dst, asCObjectType *objType, asCScriptEngine *engine);
 	int  CopyFromAs(const asCScriptObject *other, asCObjectType *objType);
+	void CallDestructor(asCObjectType* ot);
+	asCObjectType* objType() const;
 
-	void CallDestructor();
-
-//=============================================
-// Properties
-//=============================================
-public:
-	// This is public to allow external code (e.g. JIT compiler) to do asOFFSET to 
-	// access the members directly without having to modify the code to add friend
-	asCObjectType* objType;
-
-protected:
-	mutable asCAtomic refCount;
-	mutable asBYTE    gcFlag:1;
-	mutable asBYTE    hasRefCountReachedZero:1;
-	bool              isDestructCalled;
-
-	// Most script classes instances won't have neither the weakRefFlags nor
-	// userData so we only allocate this if requested. Even when used it is
-	// not something that will be accessed all the time so having the extra
-	// indirection will not affect the performance significantly.
-	struct SExtra
-	{
-		SExtra() : weakRefFlag(0) {};
-		asCLockableSharedBool *weakRefFlag;
-		asCArray<asPWORD>      userData;
-	};
-	mutable SExtra *extra;
+private:
+	void ExecDestructor();
 };
+
+static_assert(sizeof(asCScriptObject) == sizeof(asIScriptObject));
 
 void ScriptObject_Construct(asCObjectType *objType, asCScriptObject *self);
 asCScriptObject &ScriptObject_Assignment(asCScriptObject *other, asCScriptObject *self);
 
 void ScriptObject_ConstructUnitialized(asCObjectType *objType, asCScriptObject *self);
 
-void RegisterScriptObject(asCScriptEngine *engine);
+void RegisterScriptObject(class asCScriptEngine *engine);
 
 asIScriptObject *ScriptObjectFactory(const asCObjectType *objType, asCScriptEngine *engine);
 asIScriptObject *ScriptObjectCopyFactory(const asCObjectType *objType, void *origObj, asCScriptEngine *engine);

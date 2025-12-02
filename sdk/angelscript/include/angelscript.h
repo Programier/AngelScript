@@ -261,7 +261,8 @@ enum asEObjTypeFlags : asQWORD
 	asOBJ_TEMPLATE_SUBTYPE            = (1<<27),
 	asOBJ_TYPEDEF                     = (1<<28),
 	asOBJ_ABSTRACT                    = (1<<29),
-	asOBJ_APP_ALIGN16                 = (1<<30)
+	asOBJ_APP_ALIGN16                 = (1<<30),
+	asOBJ_APP_NATIVE_INHERITANCE      = (asQWORD(1) << 33)
 };
 
 // Behaviours
@@ -700,6 +701,7 @@ public:
 
 	// Object types
 	virtual int            RegisterObjectType(const char *obj, int byteSize, asQWORD flags) = 0;
+	virtual int            RegisterObjectBaseType(const char* obj, const char* base) = 0;
 	virtual int            RegisterObjectProperty(const char *obj, const char *declaration, int byteOffset, int compositeOffset = 0, bool isCompositeIndirect = false) = 0;
 	virtual int            RegisterObjectMethod(const char *obj, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false) = 0;
 	virtual int            RegisterObjectBehaviour(const char *obj, asEBehaviours behaviour, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary = 0, int compositeOffset = 0, bool isCompositeIndirect = false) = 0;
@@ -1036,36 +1038,6 @@ protected:
 	virtual ~asIScriptGeneric() {}
 };
 
-class asIScriptObject
-{
-public:
-	// Memory management
-	virtual int                    AddRef() const = 0;
-	virtual int                    Release() const = 0;
-	virtual asILockableSharedBool *GetWeakRefFlag() const = 0;
-
-	// Type info
-	virtual int            GetTypeId() const = 0;
-	virtual asITypeInfo   *GetObjectType() const = 0;
-
-	// Class properties
-	virtual asUINT      GetPropertyCount() const = 0;
-	virtual int         GetPropertyTypeId(asUINT prop) const = 0;
-	virtual const char *GetPropertyName(asUINT prop) const = 0;
-	virtual void       *GetAddressOfProperty(asUINT prop) = 0;
-
-	// Miscellaneous
-	virtual asIScriptEngine *GetEngine() const = 0;
-	virtual int              CopyFrom(const asIScriptObject *other) = 0;
-
-	// User data
-	virtual void *SetUserData(void *data, asPWORD type = 0) = 0;
-	virtual void *GetUserData(asPWORD type = 0) const = 0;
-
-protected:
-	virtual ~asIScriptObject() {}
-};
-
 class asITypeInfo
 {
 public:
@@ -1083,6 +1055,7 @@ public:
 	virtual const char      *GetName() const = 0;
 	virtual	const char      *GetNamespace() const = 0;
 	virtual asITypeInfo     *GetBaseType() const = 0;
+	virtual asITypeInfo     *GetNativeBaseType() const = 0;
 	virtual bool             DerivesFrom(const asITypeInfo *objType) const = 0;
 	virtual asQWORD          GetFlags() const = 0;
 	virtual asUINT           GetSize() const = 0;
@@ -1111,6 +1084,13 @@ public:
 	virtual asUINT      GetPropertyCount() const = 0;
 	virtual int         GetProperty(asUINT index, const char **name, int *typeId = 0, bool *isPrivate = 0, bool *isProtected = 0, int *offset = 0, bool *isReference = 0, asDWORD *accessMask = 0, int *compositeOffset = 0, bool *isCompositeIndirect = 0, bool *isConst = 0) const = 0;
 	virtual const char *GetPropertyDeclaration(asUINT index, bool includeNamespace = false) const = 0;
+	virtual const char *GetPropertyName(asUINT index) const = 0;
+	virtual int         GetPropertyTypeId(asUINT index) const = 0;
+	virtual int         GetPropertyOffset(asUINT index) const = 0;
+	virtual bool        IsPropertyPrivate(asUINT index) const = 0;
+	virtual bool        IsPropertyProtected(asUINT index) const = 0;
+	virtual bool        IsPropertyNative(asUINT index) const = 0;
+	virtual bool        IsPropertyReference(asUINT index) const= 0;
 
 	// Behaviours
 	virtual asUINT             GetBehaviourCount() const = 0;
@@ -1134,6 +1114,9 @@ public:
 	// User data
 	virtual void *SetUserData(void *data, asPWORD type = 0) = 0;
 	virtual void *GetUserData(asPWORD type = 0) const = 0;
+	
+	virtual void  SetNativeClassUserData(void* NativeClassUserData) = 0;
+	virtual void* GetNativeClassUserData() const = 0;
 
 protected:
 	virtual ~asITypeInfo() {}
@@ -2022,4 +2005,5 @@ const asSBCInfo asBCInfo[256] =
 
 END_AS_NAMESPACE
 
+#include <angelscript_object.h>
 #endif

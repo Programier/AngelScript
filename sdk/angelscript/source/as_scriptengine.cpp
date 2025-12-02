@@ -274,7 +274,6 @@ AS_API asIScriptEngine *asCreateScriptEngine(asDWORD version)
 
 } // extern "C"
 
-
 // interface
 int asCScriptEngine::SetEngineProperty(asEEngineProp property, asPWORD value)
 {
@@ -1650,6 +1649,7 @@ int asCScriptEngine::RegisterObjectProperty(const char *obj, const char *declara
 	prop->compositeOffset     = compositeOffset;
 	prop->isCompositeIndirect = isCompositeIndirect;
 	prop->accessMask          = defaultAccessMask;
+	prop->isNative            = true;
 
 	asCObjectType *ot = CastToObjectType(dt.GetTypeInfo());
 	asUINT idx = ot->properties.GetLength();
@@ -1813,6 +1813,71 @@ asCTypeInfo* asCScriptEngine::GetTemplateSubTypeByName(const asCString &name)
 	return subtype;
 }
 
+int asCScriptEngine::RegisterObjectBaseType(const char* obj, const char* base)
+{
+	if (obj == nullptr || base == nullptr)
+		return ConfigError(asINVALID_ARG, "RegisterObjectBaseType", obj, base);
+
+	int r = 0;
+	asCDataType obj_dt;
+	asCDataType base_dt;
+	asCBuilder bld(this, 0);
+
+	r = bld.ParseDataType(obj, &obj_dt, defaultNamespace);
+	if (r < 0)
+		return ConfigError(r, "RegisterObjectBaseType", obj, base);
+
+	r = bld.ParseDataType(base, &base_dt, defaultNamespace);
+	if (r < 0)
+		return ConfigError(r, "RegisterObjectBaseType", obj, base);
+
+	asCObjectType* ot		= CastToObjectType(obj_dt.GetTypeInfo());
+	asCObjectType* baseType = CastToObjectType(base_dt.GetTypeInfo());
+
+	if (ot == nullptr || baseType == nullptr)
+		return ConfigError(asINVALID_ARG, "RegisterObjectBaseType", obj, base);
+
+	if ((ot->flags & asOBJ_APP_NATIVE_INHERITANCE) == 0 || (baseType->flags & asOBJ_APP_NATIVE_INHERITANCE) == 0)
+	{
+		return ConfigError(asINVALID_ARG, "RegisterObjectBaseType", obj, base);
+	}
+
+	if (ot->derivedFrom || ot->methods.GetLength() > 0 || ot->properties.GetLength() > 0)
+	{
+		return ConfigError(asINVALID_ARG, "RegisterObjectBaseType", obj, base);
+	}
+
+	ot->derivedFrom	   = baseType;
+	ot->nativeTypeInfo = baseType;
+	baseType->AddRefInternal();
+
+	// Copy properties from base class to derived class
+
+	for (asUINT p = 0; p < baseType->properties.GetLength(); p++)
+	{
+		ot->InheritProperty(baseType->properties[p]);
+	}
+
+	// Copy methods from base class to derived class
+	for (asUINT m = 0; m < baseType->methods.GetLength(); m++)
+	{
+		// If the derived class implements the same method, then don't add the base class' method
+		asCScriptFunction* baseFunc	   = scriptFunctions[baseType->methods[m]];
+		
+		if (baseFunc->funcType == asFUNC_VIRTUAL)
+		{
+			// Push the base class function on the virtual function table
+			ot->virtualFunctionTable.PushLast(baseType->virtualFunctionTable[baseFunc->vfTableIdx]);
+			baseType->virtualFunctionTable[baseFunc->vfTableIdx]->AddRefInternal();
+		}
+
+		ot->methods.PushLast(baseType->methods[m]);
+		scriptFunctions[baseType->methods[m]]->AddRefInternal();
+	}
+
+	return 0;
+}
+
 int asCScriptEngine::RegisterObjectType(const char *name, int byteSize, asQWORD flags)
 {
 	int r;
@@ -1824,8 +1889,14 @@ int asCScriptEngine::RegisterObjectType(const char *name, int byteSize, asQWORD 
 	if( flags & asOBJ_REF )
 	{
 		// Can optionally have the asOBJ_GC, asOBJ_NOHANDLE, asOBJ_SCOPED, or asOBJ_TEMPLATE flag set, but nothing else
-		if( flags & ~(asOBJ_REF | asOBJ_GC | asOBJ_NOHANDLE | asOBJ_SCOPED | asOBJ_TEMPLATE | asOBJ_NOCOUNT | asOBJ_IMPLICIT_HANDLE) )
+		if( flags & ~(asOBJ_REF | asOBJ_GC | asOBJ_NOHANDLE | asOBJ_SCOPED | asOBJ_TEMPLATE | asOBJ_NOCOUNT | asOBJ_IMPLICIT_HANDLE | asOBJ_APP_NATIVE_INHERITANCE) )
 			return ConfigError(asINVALID_ARG, "RegisterObjectType", name, 0);
+		
+		if( flags & asOBJ_APP_NATIVE_INHERITANCE )
+		{
+			flags |= asOBJ_IMPLICIT_HANDLE;
+		}
+		
 
 		// flags are exclusive
 		if( (flags & asOBJ_GC) && (flags & (asOBJ_NOHANDLE|asOBJ_SCOPED|asOBJ_NOCOUNT)) )
@@ -1900,9 +1971,9 @@ int asCScriptEngine::RegisterObjectType(const char *name, int byteSize, asQWORD 
 
 	// Don't allow anything else than the defined flags
 #ifndef WIP_16BYTE_ALIGN
-	if( flags - (flags & asOBJ_MASK_VALID_FLAGS) )
+	if( flags - (flags & (asOBJ_MASK_VALID_FLAGS | asOBJ_APP_NATIVE_INHERITANCE)) )
 #else
-	if( flags - (flags & (asOBJ_MASK_VALID_FLAGS | asOBJ_APP_ALIGN16)) )
+	if( flags - (flags & (asOBJ_MASK_VALID_FLAGS | asOBJ_APP_ALIGN16 | asOBJ_APP_NATIVE_INHERITANCE)) )
 #endif
 		return ConfigError(asINVALID_ARG, "RegisterObjectType", name, 0);
 
@@ -2220,7 +2291,7 @@ int asCScriptEngine::RegisterBehaviourToObjectType(asCObjectType *objectType, as
 		else
 		{
 			// Verify that it is a value type
-			if( !(func.objectType->flags & asOBJ_VALUE) )
+			if( !(func.objectType->flags & asOBJ_VALUE) && !(objectType->flags & asOBJ_APP_NATIVE_INHERITANCE))
 			{
 				WriteMessage("", 0, 0, asMSGTYPE_ERROR, TXT_ILLEGAL_BEHAVIOUR_FOR_TYPE);
 				return ConfigError(asILLEGAL_BEHAVIOUR_FOR_TYPE, "RegisterObjectBehaviour", objectType->name.AddressOf(), decl);
@@ -2909,6 +2980,34 @@ int asCScriptEngine::RegisterObjectMethod(const char *obj, const char *declarati
 	return RegisterMethodToObjectType(CastToObjectType(dt.GetTypeInfo()), declaration, funcPointer, callConv, auxiliary, compositeOffset, isCompositeIndirect);
 }
 
+asCScriptFunction* asCScriptEngine::CreateVirtualFunction(asCScriptFunction *func, int idx)
+{
+	asCScriptFunction *vf = asNEW(asCScriptFunction)(this, nullptr, asFUNC_VIRTUAL);
+	
+    if( vf == 0 )
+		return nullptr;
+	
+	vf->name             = func->name;
+	vf->nameSpace        = func->nameSpace;
+	vf->returnType       = func->returnType;
+	vf->parameterTypes   = func->parameterTypes;
+	vf->inOutFlags       = func->inOutFlags;
+	vf->id               = GetNextScriptFunctionId();
+	vf->objectType       = func->objectType;
+	vf->objectType->AddRefInternal();
+	vf->signatureId      = func->signatureId;
+	vf->vfTableIdx       = idx;
+	vf->traits           = func->traits;
+	
+	// Clear the shared trait since the virtual function should not have that
+	vf->SetShared(false);
+	
+	// It is not necessary to copy the default args, as they have no meaning in the virtual function
+	AddScriptFunction(vf);
+	
+	return vf;
+}
+
 // internal
 int asCScriptEngine::RegisterMethodToObjectType(asCObjectType *objectType, const char *declaration, const asSFuncPtr &funcPointer, asDWORD callConv, void *auxiliary, int compositeOffset, bool isCompositeIndirect)
 {
@@ -3011,6 +3110,8 @@ int asCScriptEngine::RegisterMethodToObjectType(asCObjectType *objectType, const
 			return ConfigError(asINVALID_DECLARATION, "RegisterObjectMethod", objectType->name.AddressOf(), declaration);
 	}
 	
+	asCScriptFunction* VirtualMethod = nullptr;
+
 	// Check against duplicate methods
 	if( func->name == "opConv" || func->name == "opImplConv" || func->name == "opCast" || func->name == "opImplCast" )
 	{
@@ -3035,16 +3136,48 @@ int asCScriptEngine::RegisterMethodToObjectType(asCObjectType *objectType, const
 			if( f->name == func->name &&
 				f->IsSignatureExceptNameAndReturnTypeEqual(func) )
 			{
-				func->funcType = asFUNC_DUMMY;
-				asDELETE(func,asCScriptFunction);
-				return ConfigError(asALREADY_REGISTERED, "RegisterObjectMethod", objectType->name.AddressOf(), declaration);
+				if (objectType->flags & asOBJ_APP_NATIVE_INHERITANCE)
+				{
+					if (f->objectType == objectType)
+					{
+						func->funcType = asFUNC_DUMMY;
+						asDELETE(func, asCScriptFunction);
+						return ConfigError(asALREADY_REGISTERED, "RegisterObjectMethod", objectType->name.AddressOf(), declaration);
+					}
+
+					if (f->IsFinal())
+					{
+						asCString msg;
+						msg.Format(TXT_METHOD_CANNOT_OVERRIDE_s, f->GetDeclaration());
+						return ConfigError(asERROR, "RegisterObjectMethod", objectType->name.AddressOf(), declaration);
+					}
+
+					VirtualMethod   = f;
+					auto vfTableIdx = f->vfTableIdx;
+					f               = objectType->virtualFunctionTable[vfTableIdx];
+
+					// Overload function
+					objectType->virtualFunctionTable[vfTableIdx]->ReleaseInternal();
+					objectType->virtualFunctionTable[vfTableIdx] = func;
+				}
+				else
+				{
+					func->funcType = asFUNC_DUMMY;
+					asDELETE(func, asCScriptFunction);
+					return ConfigError(asALREADY_REGISTERED, "RegisterObjectMethod", objectType->name.AddressOf(), declaration);
+				}
 			}
 		}
 	}
 
 	func->id = GetNextScriptFunctionId();
-	func->objectType->methods.PushLast(func->id);
 	func->accessMask = defaultAccessMask;
+
+	if (!VirtualMethod)
+	{
+		func->objectType->methods.PushLast(func->id);
+	}
+
 	AddScriptFunction(func);
 
 	// If parameter type from other groups are used, add references
@@ -3070,8 +3203,22 @@ int asCScriptEngine::RegisterMethodToObjectType(asCObjectType *objectType, const
 		func->AddRefInternal();
 	}
 
+	if (objectType->flags & asOBJ_APP_NATIVE_INHERITANCE)
+	{
+		func->ComputeSignatureId();
+
+		if (!VirtualMethod && !func->IsFinal())
+		{
+			objectType->methods.PopLast();
+			VirtualMethod = CreateVirtualFunction(func, objectType->virtualFunctionTable.GetLength());
+			asASSERT(VirtualMethod);
+			objectType->virtualFunctionTable.PushLast(func);
+			objectType->methods.PushLast(VirtualMethod->id);
+		}
+	}
+
 	// Return the function id as success
-	return func->id;
+	return VirtualMethod ? VirtualMethod->id : func->id;
 }
 
 // interface
@@ -4957,7 +5104,7 @@ bool asCScriptEngine::CallGlobalFunctionRetBool(void *param1, void *param2, asSS
 	}
 }
 
-void *asCScriptEngine::CallAlloc(const asCObjectType *type) const
+void *asCScriptEngine::CallAlloc(const asCObjectType *type)
 {
 	// Allocate 4 bytes as the smallest size. Otherwise CallSystemFunction may try to
 	// copy a DWORD onto a smaller memory block, in case the object type is return in registers.
@@ -4966,23 +5113,26 @@ void *asCScriptEngine::CallAlloc(const asCObjectType *type) const
 	asUINT size = type->size;
 	if( size & 0x3 )
 		size += 4 - (size & 0x3);
+	
+	void* ptr = nullptr;
 
 #ifndef WIP_16BYTE_ALIGN
 #if defined(AS_DEBUG)
-	return ((asALLOCFUNCDEBUG_t)userAlloc)(size, __FILE__, __LINE__);
+	ptr = ((asALLOCFUNCDEBUG_t)userAlloc)(size, __FILE__, __LINE__);
 #else
-	return userAlloc(size);
+	ptr = userAlloc(size);
 #endif
 #else
 #if defined(AS_DEBUG)
-	return ((asALLOCALIGNEDFUNCDEBUG_t)userAllocAligned)(size, type->alignment, __FILE__, __LINE__);
+	ptr = ((asALLOCALIGNEDFUNCDEBUG_t)userAllocAligned)(size, type->alignment, __FILE__, __LINE__);
 #else
-	return userAllocAligned(size, type->alignment);
+	ptr = userAllocAligned(size, type->alignment);
 #endif
 #endif
+	return ptr;
 }
 
-void asCScriptEngine::CallFree(void *obj) const
+void asCScriptEngine::CallFree(void *obj)
 {
 #ifndef WIP_16BYTE_ALIGN
 	userFree(obj);
@@ -5556,7 +5706,7 @@ int asCScriptEngine::CallScriptObjectMethod(void *obj, int funcId)
 void *asCScriptEngine::CreateUninitializedScriptObject(const asITypeInfo *type)
 {
 	// This function only works for script classes. Registered types cannot be created this way.
-	if( type == 0 || !(type->GetFlags() & asOBJ_SCRIPT_OBJECT) )
+	if( type == 0 || (!(type->GetFlags() & asOBJ_SCRIPT_OBJECT) && !(type->GetFlags() & asOBJ_APP_NATIVE_INHERITANCE)) )
 		return 0;
 
 	asCObjectType *objType = CastToObjectType(const_cast<asCTypeInfo*>(reinterpret_cast<const asCTypeInfo*>(type)));

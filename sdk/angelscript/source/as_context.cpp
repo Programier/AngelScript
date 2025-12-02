@@ -1603,7 +1603,8 @@ asCScriptFunction *asCContext::GetRealFunc(asCScriptFunction * currentFunction, 
 		}
 		else
 		{
-			asCObjectType *objType = obj->objType;
+			asCObjectType* objType = obj->objType();
+
 			asCScriptFunction * realFunc = 0;
 
 			if( currentFunction->funcType == asFUNC_VIRTUAL )
@@ -2155,7 +2156,7 @@ void asCContext::CallInterfaceMethod(asCScriptFunction *func)
 		return;
 	}
 
-	asCObjectType *objType = obj->objType;
+	asCObjectType *objType = obj->objType();
 
 	// Search the object type for a function that matches the interface function
 	asCScriptFunction *realFunc = 0;
@@ -2196,13 +2197,24 @@ void asCContext::CallInterfaceMethod(asCScriptFunction *func)
 
 		asASSERT( realFunc->signatureId == func->signatureId );
 	}
+	else if( func->funcType == asFUNC_SYSTEM )
+	{
+		realFunc = objType && func->vfTableIdx != -1 ? objType->virtualFunctionTable[func->vfTableIdx] : func;
+	}
 	else // if( func->funcType == asFUNC_VIRTUAL )
 	{
 		realFunc = objType->virtualFunctionTable[func->vfTableIdx];
 	}
 
 	// Then call the true script function
-	CallScriptFunction(realFunc);
+	if(realFunc->GetFuncType() == asFUNC_SYSTEM)
+	{
+		m_regs.stackPointer += CallSystemFunction(realFunc->GetId(), this);
+	}
+	else
+	{
+		CallScriptFunction(realFunc);
+	}
 }
 
 #if AS_USE_COMPUTED_GOTOS
@@ -3969,12 +3981,12 @@ static const void *const dispatch_table[256] = {
 				asDWORD typeId = asBC_DWORDARG(l_bc);
 
 				asCScriptObject *obj = (asCScriptObject *)* a;
-				asCObjectType *objType = obj->objType;
+				asCObjectType *objType = obj->objType();
 				asCObjectType *to = m_engine->GetObjectTypeFromTypeId(typeId);
 
 				// This instruction can only be used with script classes and interfaces
-				asASSERT( objType->flags & asOBJ_SCRIPT_OBJECT );
-				asASSERT( to->flags & asOBJ_SCRIPT_OBJECT );
+				asASSERT( objType->flags & (asOBJ_SCRIPT_OBJECT | asOBJ_APP_NATIVE_INHERITANCE) );
+				asASSERT( to->flags & (asOBJ_SCRIPT_OBJECT | asOBJ_APP_NATIVE_INHERITANCE));
 
 				if( objType->Implements(to) || objType->DerivesFrom(to) )
 				{

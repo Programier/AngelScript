@@ -180,8 +180,6 @@ int asCCompiler::CompileDefaultCopyConstructor(asCBuilder* in_builder, asCScript
 				CompileVariableAccess("this", "", &ctx, 0);
 				ctx.bc.Instr(asBC_RDSPtr);
 				ctx.bc.InstrWORD(asBC_GETOBJ, AS_PTR_SIZE);
-				ctx.bc.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.copyconstruct, 2 * AS_PTR_SIZE);
-				ctx.bc.OptimizeLocally(tempVariableOffsets);
 			}
 			else
 			{
@@ -189,9 +187,18 @@ int asCCompiler::CompileDefaultCopyConstructor(asCBuilder* in_builder, asCScript
 				ctx.bc.Instr(asBC_RDSPtr);
 				CompileVariableAccess("this", "", &ctx, 0);
 				ctx.bc.Instr(asBC_RDSPtr);
-				ctx.bc.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.copyconstruct, 2 * AS_PTR_SIZE);
-				ctx.bc.OptimizeLocally(tempVariableOffsets);
 			}
+
+			if(outFunc->objectType->derivedFrom->flags & asOBJ_APP_NATIVE_INHERITANCE)
+			{
+				ctx.bc.Call(asBC_CALLSYS, outFunc->objectType->derivedFrom->beh.copyconstruct, 2 * AS_PTR_SIZE);
+			}
+			else
+			{
+				ctx.bc.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.copyconstruct, 2 * AS_PTR_SIZE);
+			}
+			ctx.bc.OptimizeLocally(tempVariableOffsets);
+
 			byteCode.AddCode(&ctx.bc);
 			byteCode.InstrPTR(asBC_JitEntry, 0);
 		}
@@ -203,13 +210,16 @@ int asCCompiler::CompileDefaultCopyConstructor(asCBuilder* in_builder, asCScript
 			{
 				asCExprContext ctx(engine);
 				CompileVariableAccess("this", "", &ctx, 0);
-				ctx.bc.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+
+				auto call_bc = (outFunc->objectType->derivedFrom->flags & asOBJ_APP_NATIVE_INHERITANCE) ? asBC_CALLSYS : asBC_CALL;
+
+				ctx.bc.Call(call_bc, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
 
 				CompileVariableAccess("other", "", &ctx, 0);
 				ctx.bc.Instr(asBC_RDSPtr);
 				CompileVariableAccess("this", "", &ctx, 0);
 				ctx.bc.Instr(asBC_RDSPtr);
-				ctx.bc.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.copy, 2 * AS_PTR_SIZE);
+				ctx.bc.Call(call_bc, outFunc->objectType->derivedFrom->beh.copy, 2 * AS_PTR_SIZE);
 
 				ctx.bc.OptimizeLocally(tempVariableOffsets);
 				byteCode.AddCode(&ctx.bc);
@@ -290,7 +300,15 @@ int asCCompiler::CompileDefaultConstructor(asCBuilder *in_builder, asCScriptCode
 		// Call the base class' default constructor
 		byteCode.InstrSHORT(asBC_PSF, 0);
 		byteCode.Instr(asBC_RDSPtr);
-		byteCode.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+
+		if(outFunc->objectType->derivedFrom->flags & asOBJ_APP_NATIVE_INHERITANCE)
+		{
+			byteCode.Call(asBC_CALLSYS, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+		}
+		else
+		{
+			byteCode.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+		}
 	}
 
 	// Initialize the class members that explicit expressions afterwards. This allow the expressions
@@ -657,7 +675,7 @@ void asCCompiler::CompileMemberInitialization(asCByteCode *bc, bool onlyDefaults
 		asCObjectProperty *prop = outFunc->objectType->properties[n];
 		
 		// Don't compile additional member initialization if it has already been explicitly initialized in the body
-		if (engine->ep.memberInitMode == 1 && m_initializedProperties.IndexOf(prop) >= 0)
+		if (prop->isNative || (engine->ep.memberInitMode == 1 && m_initializedProperties.IndexOf(prop) >= 0))
 			continue;
 
 		// Check if the property has an initialization expression
@@ -831,7 +849,14 @@ int asCCompiler::CompileFunction(asCBuilder *in_builder, asCScriptCode *in_scrip
 					asCByteCode tmpBC(engine);
 					tmpBC.InstrSHORT(asBC_PSF, 0);
 					tmpBC.Instr(asBC_RDSPtr);
-					tmpBC.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+					if (outFunc->objectType->derivedFrom->flags & asOBJ_APP_NATIVE_INHERITANCE)
+					{
+						tmpBC.Call(asBC_CALLSYS, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+					}
+					else
+					{
+						tmpBC.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+					}
 					tmpBC.OptimizeLocally(tempVariableOffsets);
 					byteCode.AddCode(&tmpBC);
 				}
@@ -874,7 +899,16 @@ int asCCompiler::CompileFunction(asCBuilder *in_builder, asCScriptCode *in_scrip
 						asCByteCode tmpBC(engine);
 						tmpBC.InstrSHORT(asBC_PSF, 0);
 						tmpBC.Instr(asBC_RDSPtr);
-						tmpBC.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+						
+						if(outFunc->objectType->derivedFrom->flags & asOBJ_APP_NATIVE_INHERITANCE)
+						{
+							tmpBC.Call(asBC_CALLSYS, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+						}
+						else
+						{
+							tmpBC.Call(asBC_CALL, outFunc->objectType->derivedFrom->beh.construct, AS_PTR_SIZE);
+						}
+
 						tmpBC.OptimizeLocally(tempVariableOffsets);
 						byteCode.AddCode(&tmpBC);
 
@@ -2158,9 +2192,9 @@ int asCCompiler::PrepareArgument(asCDataType *paramType, asCExprContext *ctx, as
 			// Allow anonymous init lists to be converted to the arg type
 			if( ctx->IsAnonymousInitList() )
 				ImplicitConversion(ctx, dt, node, asIC_IMPLICIT_CONV, true, true);
-			
-			if( (ctx->type.dataType.IsObject() || ctx->type.dataType.IsFuncdef()) && ctx->type.dataType.GetTypeInfo() != dt.GetTypeInfo() )
-				ImplicitConversion(ctx, dt, node, asIC_IMPLICIT_CONV, true, false);
+
+			if ((ctx->type.dataType.IsObject() || ctx->type.dataType.IsFuncdef()) && ctx->type.dataType.GetTypeInfo() != dt.GetTypeInfo())
+				ImplicitConversion(ctx, dt, node, asIC_IMPLICIT_CONV, true, (ctx->type.dataType.IsObject() && !ctx->type.dataType.IsObjectHandle()));
 
 			// Only objects that support object handles
 			// can be guaranteed to be safe. Local variables are
@@ -7096,7 +7130,7 @@ bool asCCompiler::CompileRefCast(asCExprContext *ctx, const asCDataType &to, boo
 
 	// If the script object didn't implement a matching opCast or opImplCast
 	// then check if the desired type is part of the hierarchy
-	if( !conversionDone && (ctx->type.dataType.GetTypeInfo()->flags & asOBJ_SCRIPT_OBJECT) )
+	if( !conversionDone && (ctx->type.dataType.GetTypeInfo()->flags & (asOBJ_SCRIPT_OBJECT | asOBJ_APP_NATIVE_INHERITANCE)) )
 	{
 		// We need it to be a reference
 		if( !ctx->type.dataType.IsReference() )
@@ -14836,7 +14870,8 @@ int asCCompiler::MatchArgument(asCScriptFunction *desc, const asCExprContext *ar
 		ti.type.dataType.MakeReference(false);
 
 	// Don't allow the implicit conversion to make a copy in case the argument is expecting a reference to the true value
-	if (desc->parameterTypes[paramNum].IsReference() && desc->inOutFlags[paramNum] == asTM_INOUTREF)
+	// if (desc->parameterTypes[paramNum].IsReference() && desc->inOutFlags[paramNum] == asTM_INOUTREF)
+	if (desc->parameterTypes[paramNum].IsReference() && !desc->parameterTypes[paramNum].IsReadOnly())
 		allowObjectConstruct = false;
 
 	cost = ImplicitConversion(&ti, desc->parameterTypes[paramNum], 0, asIC_IMPLICIT_CONV, false, allowObjectConstruct);
@@ -14846,7 +14881,8 @@ int asCCompiler::MatchArgument(asCScriptFunction *desc, const asCExprContext *ar
 	// If the function parameter is an inout-reference then it must not be possible to call the
 	// function with an incorrect argument type, even though the type can normally be converted.
 	if (desc->parameterTypes[paramNum].IsReference() &&
-		desc->inOutFlags[paramNum] == asTM_INOUTREF &&
+		// desc->inOutFlags[paramNum] == asTM_INOUTREF &&
+		!desc->parameterTypes[paramNum].IsReadOnly() && 
 		desc->parameterTypes[paramNum].GetTokenType() != ttQuestion)
 	{
 		// Observe, that the below checks are only necessary for when unsafe references have been

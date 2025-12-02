@@ -1493,6 +1493,8 @@ int asCBuilder::ParseFunctionDeclaration(asCObjectType *objType, const char *dec
 			func->SetExplicit(true);
 		else if( source.TokenEquals(n->tokenPos, n->tokenLength, PROPERTY_TOKEN))
 			func->SetProperty(true);
+		else if( source.TokenEquals(n->tokenPos, n->tokenLength, FINAL_TOKEN))
+			func->SetFinal(true);
 		else
 			return asINVALID_DECLARATION;
 
@@ -2523,7 +2525,7 @@ int asCBuilder::RegisterClass(asCScriptNode *node, asCScriptCode *file, asSNameS
 		if (node->tokenType == ttHandle)
 			st->flags |= asOBJ_IMPLICIT_HANDLE;
 
-		st->size = sizeof(asCScriptObject);
+		st->size = sizeof(asCScriptObjectData);
 		st->name = name;
 		st->nameSpace = ns;
 		st->module = module;
@@ -3357,7 +3359,7 @@ void asCBuilder::DetermineTypeRelations()
 				{
 					AddInterfaceFromMixinToClass(decl, node, mixin);
 				}
-				else if (!(objType->flags & asOBJ_SCRIPT_OBJECT) ||
+				else if ((!(objType->flags & asOBJ_SCRIPT_OBJECT) && !(objType->flags & asOBJ_APP_NATIVE_INHERITANCE)) ||
 					(objType->flags & asOBJ_NOINHERIT))
 				{
 					// Either the class is not a script class or interface
@@ -3476,6 +3478,42 @@ void asCBuilder::CompileClasses(asUINT numTempl)
 	{
 		sClassDeclaration *decl = classDeclarations[n];
 		asCObjectType *ot = CastToObjectType(decl->typeInfo);
+		asCObjectType *base = ot->derivedFrom;
+		
+		if(base)
+		{
+			ot->nativeTypeInfo = (base->flags & asOBJ_APP_NATIVE_INHERITANCE) ? base : base->nativeTypeInfo;
+		}
+        
+		if( ot->nativeTypeInfo )
+		{
+			ot->flags |= asOBJ_IMPLICIT_HANDLE;
+            
+			if(ot->nativeTypeInfo->flags & asOBJ_NOCOUNT)
+			{
+				ot->flags |= asOBJ_NOCOUNT;
+				ot->flags &= ~asOBJ_GC;
+				
+				engine->scriptFunctions[ot->beh.addref]->ReleaseInternal();
+				engine->scriptFunctions[ot->beh.release]->ReleaseInternal();
+				engine->scriptFunctions[ot->beh.gcEnumReferences]->ReleaseInternal();
+				engine->scriptFunctions[ot->beh.gcGetFlag]->ReleaseInternal();
+				engine->scriptFunctions[ot->beh.gcGetRefCount]->ReleaseInternal();
+				engine->scriptFunctions[ot->beh.gcReleaseAllReferences]->ReleaseInternal();
+				engine->scriptFunctions[ot->beh.gcSetFlag]->ReleaseInternal();
+				engine->scriptFunctions[ot->beh.getWeakRefFlag]->ReleaseInternal();
+
+				ot->beh.addref                  = 0;
+				ot->beh.release                 = 0;
+				ot->beh.gcEnumReferences        = 0;
+				ot->beh.gcGetFlag               = 0;
+				ot->beh.gcGetRefCount           = 0;
+				ot->beh.gcReleaseAllReferences  = 0;
+				ot->beh.gcSetFlag               = 0;
+				ot->beh.getWeakRefFlag          = 0;
+			}
+		}
+
 		if( decl->isExistingShared )
 		{
 			// Set the declaration as validated already, so that other
@@ -3510,12 +3548,14 @@ void asCBuilder::CompileClasses(asUINT numTempl)
 			// Copy properties from base class to derived class
 			for( asUINT p = 0; p < baseType->properties.GetLength(); p++ )
 			{
-				asCObjectProperty *prop = AddPropertyToClass(decl, baseType->properties[p]->name, baseType->properties[p]->type, baseType->properties[p]->isPrivate, baseType->properties[p]->isProtected, true);
+				asCObjectProperty *prop = ot->InheritProperty(baseType->properties[p]);
 
 				// The properties must maintain the same offset
 				asASSERT(prop && prop->byteOffset == baseType->properties[p]->byteOffset); UNUSED_VAR(prop);
 			}
 
+			ot->size = baseType->size;
+			
 			// Copy methods from base class to derived class
 			for( asUINT m = 0; m < baseType->methods.GetLength(); m++ )
 			{
@@ -3575,13 +3615,13 @@ void asCBuilder::CompileClasses(asUINT numTempl)
 					}
 				}
 
-				if( !found )
+				if( !found && baseFunc->funcType == asFUNC_VIRTUAL)
 				{
 					// Push the base class function on the virtual function table
-					ot->virtualFunctionTable.PushLast(baseType->virtualFunctionTable[m]);
-					baseType->virtualFunctionTable[m]->AddRefInternal();
+					ot->virtualFunctionTable.PushLast(baseType->virtualFunctionTable[baseFunc->vfTableIdx]);
+					baseType->virtualFunctionTable[baseFunc->vfTableIdx]->AddRefInternal();
 
-					CheckForConflictsDueToDefaultArgs(decl->script, decl->node, baseType->virtualFunctionTable[m], ot);
+					CheckForConflictsDueToDefaultArgs(decl->script, decl->node, baseType->virtualFunctionTable[baseFunc->vfTableIdx], ot);
 				}
 
 				ot->methods.PushLast(baseType->methods[m]);
@@ -3595,7 +3635,7 @@ void asCBuilder::CompileClasses(asUINT numTempl)
 			for( asUINT m = 0; m < ot->methods.GetLength(); m++ )
 			{
 				asCScriptFunction *func = GetFunctionDescription(ot->methods[m]);
-				if( func->funcType != asFUNC_VIRTUAL )
+				if( func->funcType != asFUNC_VIRTUAL && func->funcType != asFUNC_SYSTEM )
 				{
 					// Move the reference from the method list to the virtual function list
 					ot->methods.RemoveIndex(m);
@@ -3704,7 +3744,7 @@ void asCBuilder::CompileClasses(asUINT numTempl)
 				if( !decl->isExistingShared )
 				{
 					CheckNameConflictMember(ot, name.AddressOf(), nd, file, true, false);
-					AddPropertyToClass(decl, name, dt, isPrivate, isProtected, false, file, nd);
+					AddPropertyToClass(decl, name, dt, isPrivate, isProtected, false, false, file, nd);
 				}
 				else
 				{
@@ -4041,7 +4081,7 @@ void asCBuilder::CompileClasses(asUINT numTempl)
 			if( decl->isExistingShared ) continue;
 	
 			asCObjectType *ot = CastToObjectType(decl->typeInfo);
-			if( ot->IsInterface() ) continue;
+			if( ot->IsInterface() || (ot->nativeTypeInfo && ot->nativeTypeInfo->flags & asOBJ_NOCOUNT)) continue;
 	
 			typesToValidate.PushLast(ot);
 		}
@@ -4398,7 +4438,7 @@ void asCBuilder::IncludePropertiesFromMixins(sClassDeclaration *decl)
 								if( r < 0 )
 									WriteInfo(TXT_WHILE_INCLUDING_MIXIN, decl->script, node);
 
-								AddPropertyToClass(decl, name, dt, isPrivate, isProtected, false, file, n2);
+								AddPropertyToClass(decl, name, dt, isPrivate, isProtected, false, false, file, n2);
 							}
 							else
 							{
@@ -4473,7 +4513,7 @@ int asCBuilder::CreateVirtualFunction(asCScriptFunction *func, int idx)
 	return vf->id;
 }
 
-asCObjectProperty *asCBuilder::AddPropertyToClass(sClassDeclaration *decl, const asCString &name, const asCDataType &dt, bool isPrivate, bool isProtected, bool isInherited, asCScriptCode *file, asCScriptNode *node)
+asCObjectProperty *asCBuilder::AddPropertyToClass(sClassDeclaration *decl, const asCString &name, const asCDataType &dt, bool isPrivate, bool isProtected, bool isInherited, bool isNative, asCScriptCode *file, asCScriptNode *node)
 {
 	if( node )
 	{
@@ -4517,7 +4557,7 @@ asCObjectProperty *asCBuilder::AddPropertyToClass(sClassDeclaration *decl, const
 	}
 
 	// Add the property to the object type
-	return CastToObjectType(decl->typeInfo)->AddPropertyToClass(name, dt, isPrivate, isProtected, isInherited);
+	return CastToObjectType(decl->typeInfo)->AddPropertyToClass(name, dt, isPrivate, isProtected, isInherited, isNative);
 }
 
 bool asCBuilder::DoesMethodExist(asCObjectType *objType, int methodId, asUINT *methodIndex)

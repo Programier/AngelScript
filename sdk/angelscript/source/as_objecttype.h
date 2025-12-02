@@ -102,6 +102,7 @@ class asCObjectType : public asCTypeInfo
 {
 public:
 	asITypeInfo       *GetBaseType() const;
+	asITypeInfo       *GetNativeBaseType() const;
 	bool               DerivesFrom(const asITypeInfo *objType) const;
 	int                GetSubTypeId(asUINT subtypeIndex = 0) const;
 	asITypeInfo       *GetSubType(asUINT subtypeIndex = 0) const;
@@ -119,10 +120,20 @@ public:
 	asUINT             GetPropertyCount() const;
 	int                GetProperty(asUINT index, const char **name, int *typeId, bool *isPrivate, bool *isProtected, int *offset, bool *isReference, asDWORD *accessMask, int *compositeOffset, bool *isCompositeIndirect, bool *isConst) const;
 	const char        *GetPropertyDeclaration(asUINT index, bool includeNamespace = false) const;
+	const char        *GetPropertyName(asUINT index) const;
+	int                GetPropertyTypeId(asUINT index) const;
+	int                GetPropertyOffset(asUINT index) const;
+	bool               IsPropertyPrivate(asUINT index) const;
+	bool               IsPropertyProtected(asUINT index) const;
+	bool               IsPropertyNative(asUINT index) const;
+	bool               IsPropertyReference(asUINT index) const;
 	asUINT             GetBehaviourCount() const;
 	asIScriptFunction *GetBehaviourByIndex(asUINT index, asEBehaviours *outBehaviour) const;
 	asUINT             GetChildFuncdefCount() const;
 	asITypeInfo       *GetChildFuncdef(asUINT index) const;
+
+	void  SetNativeClassUserData(void* NativeClassUserData);
+	void* GetNativeClassUserData() const;
 
 public:
 	asCObjectType(asCScriptEngine *engine);
@@ -133,7 +144,8 @@ public:
 
 	bool IsInterface() const;
 
-	asCObjectProperty *AddPropertyToClass(const asCString &name, const asCDataType &dt, bool isPrivate, bool isProtected, bool isInherited);
+	asCObjectProperty *AddPropertyToClass(const asCString &name, const asCDataType &dt, bool isPrivate, bool isProtected, bool isInherited, bool isNative = false);
+	asCObjectProperty *InheritProperty(asCObjectProperty* prop);
 	void ReleaseAllProperties();
 
 #ifdef WIP_16BYTE_ALIGN
@@ -146,6 +158,7 @@ public:
 	asCArray<asCObjectType*>     interfaces;
 	asCArray<asUINT>             interfaceVFTOffsets;
 	asCObjectType *              derivedFrom;
+	asCObjectType *              nativeTypeInfo;
 	asCArray<asCScriptFunction*> virtualFunctionTable;
 
 	// Used for funcdefs declared as members of class.
@@ -158,6 +171,7 @@ public:
 	asCArray<asCDataType> templateSubTypes;   // increases refCount for typeinfo held in datatype
 	bool                  acceptValueSubType;
 	bool                  acceptRefSubType;
+	void*                 nativeClassUserData;
 
 protected:
 	friend class asCScriptEngine;
